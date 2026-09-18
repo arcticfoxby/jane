@@ -12,6 +12,9 @@ logs/
 Thumbs.db
 .DS_Store
 
+# Local project instructions
+AGENTS.md
+
 # Local secrets and signing material
 .env
 .env.*
