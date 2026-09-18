@@ -1,6 +1,6 @@
-# 简 (Jane) 1.0.0
+# 简 (Jane) 1.0.3
 
-Jane aligns only the Mod JARs that a multiplayer server explicitly marks as required. It does not synchronize the whole `mods` folder. Unlisted client-only mods, such as Sodium, Iris, maps, HUD mods, and ReplayMod, are left alone.
+Jane aligns only Mod JARs that remote clients truly need for a multiplayer server. It does not synchronize the whole `mods` folder. Extra client mods, such as Sodium, Iris, maps, HUD mods, and ReplayMod, are left alone.
 
 - Minecraft Java Edition **1.20.1**, **Fabric**, **Java 17**.
 - Install **Fabric Loader**, **Fabric API**, and **Jane** on both the dedicated server and client. Jane does not install these prerequisites.
@@ -22,13 +22,18 @@ On first dedicated-server start, Jane creates `<gameDir>/config/jane/server.json
 
 ```json
 {
-  "requiredMods": []
+  "requiredMods": [],
+  "environmentOverrides": {}
 }
 ```
 
-A copy is in [`config/jane/server.json`](config/jane/server.json). Add the actual Fabric Mod IDs that every client must match, for example Create and Farmer's Delight if those are required on your server. Jane resolves each ID against loaded mods and computes the top-level JAR version, size, and SHA-512 automatically each time the server starts. The server administrator does not enter filenames, hashes, or download URLs. Jane itself must not appear in `requiredMods`.
+A copy is in [`config/jane/server.json`](config/jane/server.json). `requiredMods` is the set of Mod IDs the administrator asks Jane to examine, not an unconditional list of client requirements. Jane excludes Fabric server-only and client-only declarations. For universal mods, it checks Modrinth's environment metadata for the exact top-level JAR SHA-512. Only `client_and_server` is automatically required on remote clients; server-only and client-optional results are excluded. Jane uses the server's actual JAR version, size, and SHA-512 in the final manifest. The administrator does not enter filenames, hashes, or download URLs. Jane itself must not appear in `requiredMods`.
 
-Only direct, unique JARs in this server instance's `mods` folder can be required. Missing IDs, ambiguous origins, and nested-only origins make the manifest invalid and cause login to be refused with a configuration message.
+An exact JAR absent from Modrinth, or returned with an unknown environment, remains `UNKNOWN`. If the administrator knows that this exact JAR is required on remote clients, add `"mod_id": "CLIENT_REQUIRED"` to `environmentOverrides`. Overrides apply **only** to `UNKNOWN` candidates; they cannot override explicit server-only, client-optional, or already client-required metadata. Without an override, `UNKNOWN` makes manifest construction fail with a configuration error. An old config containing only `requiredMods` remains valid.
+
+Jane makes one batch Modrinth environment lookup per manifest build when universal candidates exist. Network errors, non-200 responses, and malformed metadata fail closed: Jane refuses Jane logins rather than silently producing an incomplete required manifest.
+
+Only direct, unique JARs in this server instance's `mods` folder can be required. Missing IDs and ambiguous or nested-only origins for universal candidates make the manifest invalid and cause login to be refused with a configuration message.
 
 The client never sends its complete mod list. A Jane server sends a login query; the client responds only with PASS, MISMATCH, or PROTOCOL_ERROR. On mismatch the login ends before the sync screen opens. Extra client mods do not block login. Server-provided URLs, paths, filenames, and commands are never accepted.
 

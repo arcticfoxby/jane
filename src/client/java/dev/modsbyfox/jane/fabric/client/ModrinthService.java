@@ -27,7 +27,7 @@ final class ModrinthService {
     Optional<ResolutionPlan.Source> find(ManifestEntry target) throws IOException, InterruptedException {
         URI uri = URI.create("https://api.modrinth.com/v2/version_file/" + target.sha512() + "?algorithm=sha512");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.0.2")
+                .header("User-Agent", "modsbyfox/Jane/1.0.3")
                 .header("Accept", "application/json").GET().build();
         HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
@@ -64,7 +64,7 @@ final class ModrinthService {
     void download(ResolutionPlan.Source source, ManifestEntry target, java.nio.file.Path destination,
                   BooleanSupplier cancelled, LongConsumer progress) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(source.uri()).timeout(Duration.ofMinutes(5))
-                .header("User-Agent", "modsbyfox/Jane/1.0.2").GET().build();
+                .header("User-Agent", "modsbyfox/Jane/1.0.3").GET().build();
         HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream in = response.body(); var out = java.nio.file.Files.newOutputStream(destination,
                 java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
