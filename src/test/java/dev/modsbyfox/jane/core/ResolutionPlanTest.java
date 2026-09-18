@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -69,6 +70,57 @@ class ResolutionPlanTest {
         assertEquals(1, plan.downloadQueue().size());
         assertEquals(1, plan.queue(ResolutionPlan.Classification.SERVER_DOWNLOADABLE).size());
         assertNull(plan.queue(ResolutionPlan.Classification.SERVER_DOWNLOADABLE).get(0).source().uri());
+    }
+
+    @Test
+    void newSessionRechecksExactHashAndCanSwitchFromServerToPublic() throws Exception {
+        List<Comparison.Result> comparisons = missing(1);
+        ResolutionPlan first = ResolutionPlan.resolve(comparisons, entry -> Optional.empty(), true, count -> { });
+        assertEquals(ResolutionPlan.Classification.SERVER_DOWNLOADABLE, first.items().get(0).classification());
+        assertEquals(comparisons.get(0).required().sha512(), first.items().get(0).comparison().required().sha512());
+        ResolutionPlan second = ResolutionPlan.resolve(comparisons, entry -> Optional.of(source(entry)), true, count -> { });
+        assertEquals(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE, second.items().get(0).classification());
+        assertTrue(second.queue(ResolutionPlan.Classification.SERVER_DOWNLOADABLE).isEmpty());
+        ResolutionPlan anotherServer = ResolutionPlan.resolve(comparisons, entry -> Optional.empty(), false, count -> { });
+        assertEquals(ResolutionPlan.Classification.UNRESOLVED, anotherServer.items().get(0).classification());
+    }
+
+    @Test
+    void fortyOneRequiredClassifyAsThirtyEightPublicThreeServerOrUnresolved() throws Exception {
+        List<Comparison.Result> comparisons = missing(41);
+        ResolutionPlan.Resolver resolver = entry -> Integer.parseInt(entry.modId().substring(3)) < 38
+                ? Optional.of(source(entry)) : Optional.empty();
+        ResolutionPlan enabled = ResolutionPlan.resolve(comparisons, resolver, true, count -> { });
+        ResolutionPlan disabled = ResolutionPlan.resolve(comparisons, resolver, false, count -> { });
+        assertEquals(38, enabled.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE));
+        assertEquals(3, enabled.count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
+        assertEquals(0, enabled.count(ResolutionPlan.Classification.UNRESOLVED));
+        assertEquals(38, disabled.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE));
+        assertEquals(0, disabled.count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
+        assertEquals(3, disabled.count(ResolutionPlan.Classification.UNRESOLVED));
+    }
+
+    @Test
+    void sourceResolutionStartsOnlyOnExplicitActionAndCannotRepeat() throws Exception {
+        List<Comparison.Result> comparisons = missing(3);
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
+                comparisons.stream().map(Comparison.Result::required).toList());
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons));
+        AtomicInteger lookups = new AtomicInteger();
+        assertFalse(session.resolutionStarted());
+        assertNull(session.snapshot().resolution());
+        assertEquals(0, lookups.get());
+        assertTrue(session.beginResolution(comparisons.size()));
+        session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> {
+            lookups.incrementAndGet();
+            return Optional.of(source(entry));
+        }, false, session::resolutionProgress));
+        assertFalse(session.beginResolution(comparisons.size()));
+        assertEquals(3, lookups.get());
+        assertTrue(session.resolutionStarted());
+        assertEquals(3, session.snapshot().resolutionProcessed());
+        assertTrue(session.startDownloads(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE));
+        assertFalse(session.startDownloads(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE));
     }
 
     @Test

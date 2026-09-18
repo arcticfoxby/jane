@@ -28,8 +28,16 @@ public final class JaneSyncSession {
         public long readyCount() {
             return items.stream().filter(i -> i.state() == RuntimeState.READY).count();
         }
+        public long readyCount(ResolutionPlan.Classification classification) {
+            return items.stream().filter(i -> i.item().classification() == classification
+                    && i.state() == RuntimeState.READY).count();
+        }
         public long failedCount() {
             return items.stream().filter(i -> i.state() == RuntimeState.FAILED).count();
+        }
+        public long failedCount(ResolutionPlan.Classification classification) {
+            return items.stream().filter(i -> i.item().classification() == classification
+                    && i.state() == RuntimeState.FAILED).count();
         }
         public long processedCount() {
             return items.stream().filter(i -> i.item().classification() == activeProvider
@@ -51,15 +59,20 @@ public final class JaneSyncSession {
     }
 
     private final PendingSyncContext context;
+    private boolean resolutionStarted;
     private volatile Snapshot snapshot = new Snapshot(null, List.of(), false, false, null, 0, 0, null);
 
     public JaneSyncSession(PendingSyncContext context) { this.context = context; }
     public PendingSyncContext context() { return context; }
     public Snapshot snapshot() { return snapshot; }
+    public synchronized boolean resolutionStarted() { return resolutionStarted; }
 
-    public synchronized void beginResolution(int total) {
+    public synchronized boolean beginResolution(int total) {
+        if (resolutionStarted) return false;
         if (total < 0 || snapshot.resolution() != null) throw new IllegalArgumentException("Invalid resolution start");
+        resolutionStarted = true;
         snapshot = new Snapshot(null, List.of(), false, false, null, 0, total, null);
+        return true;
     }
 
     public synchronized void resolutionProgress(int processed) {

@@ -52,6 +52,11 @@ final class StagingService {
                 resolution.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE),
                 resolution.count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE),
                 resolution.count(ResolutionPlan.Classification.UNRESOLVED));
+        if (session.context().provider() == null
+                && resolution.count(ResolutionPlan.Classification.UNRESOLVED) > 0) {
+            LOGGER.info("Jane ServerProvider unavailable for this sync; {} files remain unresolved",
+                    resolution.count(ResolutionPlan.Classification.UNRESOLVED));
+        }
     }
 
     static Outcome stage(JaneSyncSession session, Path gameDir, StagingWorkspace workspace,

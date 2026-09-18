@@ -71,8 +71,7 @@ final class SyncDetailsScreen extends Screen {
         graphics.drawCenteredString(font, title, width / 2, 14, 0xFFFFFF);
         JaneSyncSession.Snapshot snapshot = session.snapshot();
         if (snapshot.resolution() == null) {
-            graphics.drawCenteredString(font, Component.translatable(snapshot.error() == null ? "jane.sync.resolving" : "jane.sync.failed"),
-                    width / 2, 64, 0xFFCC77);
+            drawPending(graphics, snapshot);
         } else {
             List<Row> rows = rows(snapshot);
             clampScroll(rows);
@@ -99,6 +98,44 @@ final class SyncDetailsScreen extends Screen {
             }
         }
         super.render(graphics, mouseX, mouseY, partialTick);
+    }
+
+    private void drawPending(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot) {
+        if (snapshot.error() != null) {
+            graphics.drawCenteredString(font, Component.translatable("jane.sync.failed"), width / 2, 27, 0xFF7777);
+        } else if (snapshot.resolutionTotal() > 0) {
+            graphics.drawCenteredString(font, Component.translatable("jane.sync.resolving_progress",
+                    snapshot.resolutionProcessed(), snapshot.resolutionTotal(), snapshot.resolutionPercent()),
+                    width / 2, 27, 0xFFCC77);
+        }
+        int left = Math.max(12, width / 2 - Math.min(270, (width - 28) / 2));
+        int right = width - left - 10;
+        int rowHeight = 29;
+        int total = session.context().results().size() * rowHeight;
+        int view = bottom() - top();
+        scroll = Math.max(0, Math.min(scroll, Math.max(0, total - view)));
+        graphics.enableScissor(left, top(), right + 8, bottom());
+        int y = top() - scroll;
+        for (Comparison.Result result : session.context().results()) {
+            if (y + rowHeight >= top() && y < bottom()) {
+                graphics.fill(left, y, right, y + rowHeight - 2, 0x88000000);
+                graphics.drawString(font, fit(result.required().displayName(), right - left - 12), left + 6, y + 3, 0xFFFFFF);
+                graphics.drawString(font, fit(Component.translatable("jane.status."
+                        + result.status().name().toLowerCase(java.util.Locale.ROOT)).getString(),
+                        right - left - 100), left + 6, y + 16, 0xCCCCCC);
+                Component source = Component.translatable(result.status() == Comparison.Status.OK
+                        ? "jane.details.matched" : "jane.details.source_pending");
+                graphics.drawString(font, source, right - 6 - font.width(source), y + 16, 0xFFCC77);
+            }
+            y += rowHeight;
+        }
+        graphics.disableScissor();
+        if (total > view) {
+            int thumbHeight = Math.max(12, view * view / total);
+            int thumbY = top() + scroll * (view - thumbHeight) / (total - view);
+            graphics.fill(right + 4, top(), right + 8, bottom(), 0xFF444444);
+            graphics.fill(right + 4, thumbY, right + 8, thumbY + thumbHeight, 0xFFAAAAAA);
+        }
     }
 
     private void drawHeader(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot, ResolutionPlan.Classification group,
@@ -176,7 +213,10 @@ final class SyncDetailsScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
         scroll -= (int) Math.round(amount * 24);
-        clampScroll(rows(session.snapshot()));
+        if (session.snapshot().resolution() == null) {
+            int total = session.context().results().size() * 29;
+            scroll = Math.max(0, Math.min(scroll, Math.max(0, total - (bottom() - top()))));
+        } else clampScroll(rows(session.snapshot()));
         return true;
     }
 

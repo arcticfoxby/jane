@@ -44,6 +44,11 @@ public final class JaneMod implements ModInitializer {
                     provider = new ServerProviderService(FabricLoader.getInstance().getGameDir(), files,
                             config.bindPort(), Clock.systemUTC());
                     advertisedPort = config.advertisedPort();
+                    LOGGER.info("Jane ServerProvider: enabled");
+                    LOGGER.info("Jane ServerProvider listening on local TCP port {}", provider.port());
+                    LOGGER.info("Jane ServerProvider advertised TCP port {}", advertisedPort);
+                } else {
+                    LOGGER.info("Jane ServerProvider: disabled; no server-provided JAR downloads will be offered");
                 }
                 manifestError = null;
                 LOGGER.info("Jane required manifest ready: {} entries", manifest.entries().size());

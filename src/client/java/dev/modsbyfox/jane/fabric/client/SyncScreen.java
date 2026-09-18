@@ -25,7 +25,6 @@ final class SyncScreen extends Screen {
     private final Screen parent;
     private final JaneSyncSession session;
     private final AtomicBoolean cancelled = new AtomicBoolean();
-    private boolean resolveStarted;
     private boolean launching;
     private UpdatePlan ready;
     private volatile StagingWorkspace workspace;
@@ -48,7 +47,7 @@ final class SyncScreen extends Screen {
         int buttonWidth = Math.min(220, width - 40);
         int x = (width - buttonWidth) / 2;
         int actionY = height - 53;
-        downloadButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.download_trusted"), button -> start())
+        downloadButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.download_prepare"), button -> beginResolve())
                 .bounds(x, actionY, buttonWidth, 20).build());
         serverButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.download_server"), button ->
                         minecraft.setScreen(new ServerDownloadConfirmScreen(this, session)))
@@ -61,12 +60,10 @@ final class SyncScreen extends Screen {
                 .bounds(width / 2 - smallWidth - 3, height - 28, smallWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("jane.sync.cancel"), button -> onClose())
                 .bounds(width / 2 + 3, height - 28, smallWidth, 20).build());
-        if (!resolveStarted) beginResolve();
     }
 
     private void beginResolve() {
-        resolveStarted = true;
-        session.beginResolution(session.context().results().size());
+        if (cancelled.get() || !session.beginResolution(session.context().results().size())) return;
         activeTask = CompletableFuture.runAsync(() -> {
             try {
                 StagingService.resolve(session, cancelled::get);
@@ -80,12 +77,15 @@ final class SyncScreen extends Screen {
                 LOGGER.error("Jane resolve failed", error);
                 session.finish("resolve");
                 notice = Component.translatable("jane.sync.failed");
+            } else if (session.snapshot().resolution().count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE) > 0) {
+                start(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE);
+            } else {
+                JaneSyncSession.Snapshot snapshot = session.snapshot();
+                notice = snapshot.resolution().count(ResolutionPlan.Classification.ALREADY_PRESENT)
+                        == snapshot.resolution().items().size()
+                        ? Component.translatable("jane.sync.already_present") : noticeFor(snapshot);
             }
         }));
-    }
-
-    private void start() {
-        start(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE);
     }
 
     void startServerDownloads() {
@@ -124,20 +124,24 @@ final class SyncScreen extends Screen {
             session.finish(null);
             ready = outcome.plan();
             JaneSyncSession.Snapshot snapshot = session.snapshot();
-            notice = switch (SyncNotice.select(snapshot, ready != null)) {
-                case CONFIRM -> Component.translatable("jane.sync.confirm", session.context().results().size());
-                case FAILED_FILES -> Component.translatable("jane.sync.failed_files", snapshot.failedCount());
-                case MANUAL_REMAINING -> Component.translatable("jane.sync.manual_remaining", snapshot.readyCount(),
-                        snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED));
-                case FAILED_AND_MANUAL -> Component.translatable("jane.sync.failed_and_manual",
-                        snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED), snapshot.failedCount());
-                case SERVER_REMAINING -> Component.translatable("jane.sync.server_remaining",
-                        snapshot.resolution().count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE),
-                        snapshot.resolution().count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
-                case SERVER_FAILED -> Component.translatable("jane.sync.server_failed", snapshot.failedCount());
-                case INCOMPLETE -> Component.translatable("jane.sync.incomplete");
-            };
+            notice = noticeFor(snapshot);
         }));
+    }
+
+    private Component noticeFor(JaneSyncSession.Snapshot snapshot) {
+        return switch (SyncNotice.select(snapshot, ready != null)) {
+            case CONFIRM -> Component.translatable("jane.sync.confirm", session.context().results().size());
+            case FAILED_FILES -> Component.translatable("jane.sync.failed_files", snapshot.failedCount());
+            case MANUAL_REMAINING -> Component.translatable("jane.sync.manual_remaining", snapshot.readyCount(),
+                    snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED));
+            case FAILED_AND_MANUAL -> Component.translatable("jane.sync.failed_and_manual",
+                    snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED), snapshot.failedCount());
+            case SERVER_REMAINING -> Component.translatable("jane.sync.server_remaining",
+                    snapshot.readyCount(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE),
+                    snapshot.resolution().count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
+            case SERVER_FAILED -> Component.translatable("jane.sync.server_failed", snapshot.failedCount());
+            case INCOMPLETE -> Component.translatable("jane.sync.incomplete");
+        };
     }
 
     private void launch() {
@@ -167,14 +171,14 @@ final class SyncScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics);
         JaneSyncSession.Snapshot snapshot = session.snapshot();
-        downloadButton.visible = ready == null && snapshot.resolution() != null
-                && snapshot.resolution().count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE) > 0;
-        downloadButton.active = downloadButton.visible && snapshot.error() == null && !snapshot.running()
-                && snapshot.hasWaiting(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE);
+        downloadButton.visible = ready == null;
+        downloadButton.active = downloadButton.visible && !session.resolutionStarted() && snapshot.error() == null;
         serverButton.visible = ready == null && snapshot.resolution() != null
                 && snapshot.resolution().count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE) > 0;
         serverButton.active = serverButton.visible && snapshot.error() == null && !snapshot.running()
                 && snapshot.providerReady(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE)
+                && snapshot.failedCount(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE) == 0
+                && session.context().provider() != null
                 && snapshot.hasWaiting(ResolutionPlan.Classification.SERVER_DOWNLOADABLE);
         finishButton.visible = ready != null;
         finishButton.active = ready != null && !launching && snapshot.canInstall();
@@ -185,7 +189,11 @@ final class SyncScreen extends Screen {
         long broken = session.context().results().stream().filter(r -> r.status() == Comparison.Status.HASH_MISMATCH
                 || r.status() == Comparison.Status.FILE_ERROR).count();
         graphics.drawCenteredString(font, Component.translatable("jane.sync.counts", missing, updates, broken), width / 2, 35, 0xFFFFFF);
-        if (snapshot.resolution() == null) {
+        if (!session.resolutionStarted()) {
+            long needed = session.context().results().stream().filter(r -> r.status() != Comparison.Status.OK).count();
+            graphics.drawCenteredString(font, Component.translatable("jane.sync.needed", needed),
+                    width / 2, 61, 0xFFCC77);
+        } else if (snapshot.resolution() == null) {
             graphics.drawCenteredString(font, snapshot.error() == null
                     ? Component.translatable("jane.sync.resolving_progress", snapshot.resolutionProcessed(),
                     snapshot.resolutionTotal(), snapshot.resolutionPercent())
@@ -193,19 +201,23 @@ final class SyncScreen extends Screen {
             drawBar(graphics, 75, snapshot.resolutionPercent());
         } else {
             ResolutionPlan plan = snapshot.resolution();
-            graphics.drawCenteredString(font, Component.translatable("jane.sync.trusted"), width / 2, 49, 0xFFFFFF);
-            graphics.drawCenteredString(font, Component.translatable("jane.sync.size_count", plan.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE),
-                    mib(plan.size(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE))), width / 2, 61, 0xAAFFAA);
-            boolean hasServerDownloads = plan.count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE) > 0;
-            ResolutionPlan.Classification secondGroup = hasServerDownloads
-                    ? ResolutionPlan.Classification.SERVER_DOWNLOADABLE : ResolutionPlan.Classification.UNRESOLVED;
-            graphics.drawCenteredString(font, Component.translatable(hasServerDownloads
-                    ? "jane.sync.server_downloads" : "jane.sync.manual"), width / 2, 74, 0xFFFFFF);
-            graphics.drawCenteredString(font, Component.translatable("jane.sync.size_count", plan.count(secondGroup),
-                    mib(plan.size(secondGroup))), width / 2, 86, 0xFFCC77);
-            if (hasServerDownloads && plan.count(ResolutionPlan.Classification.UNRESOLVED) > 0)
-                graphics.drawCenteredString(font, Component.translatable("jane.sync.unresolved_count",
+            int groupY = 49;
+            if (plan.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE) > 0) {
+                drawGroup(graphics, "jane.sync.public_downloads", plan,
+                        ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE, groupY, 0xAAFFAA);
+                groupY += 25;
+            }
+            if (plan.count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE) > 0) {
+                drawGroup(graphics, "jane.sync.server_downloads", plan,
+                        ResolutionPlan.Classification.SERVER_DOWNLOADABLE, groupY, 0xFFCC77);
+                groupY += 24;
+            }
+            if (plan.count(ResolutionPlan.Classification.UNRESOLVED) > 0) {
+                if (groupY <= 74) drawGroup(graphics, "jane.sync.unresolved", plan,
+                        ResolutionPlan.Classification.UNRESOLVED, groupY, 0xFF7777);
+                else graphics.drawCenteredString(font, Component.translatable("jane.sync.unresolved_count",
                         plan.count(ResolutionPlan.Classification.UNRESOLVED)), width / 2, 98, 0xFF7777);
+            }
             if (snapshot.started()) {
                 int completed = (int) snapshot.processedCount();
                 int total = plan.queue(snapshot.activeProvider()).size();
@@ -226,6 +238,13 @@ final class SyncScreen extends Screen {
 
     static String mib(long bytes) {
         return String.format(java.util.Locale.ROOT, "%.1f", bytes / 1048576.0);
+    }
+
+    private void drawGroup(GuiGraphics graphics, String label, ResolutionPlan plan,
+                           ResolutionPlan.Classification classification, int y, int countColor) {
+        graphics.drawCenteredString(font, Component.translatable(label), width / 2, y, 0xFFFFFF);
+        graphics.drawCenteredString(font, Component.translatable("jane.sync.size_count", plan.count(classification),
+                mib(plan.size(classification))), width / 2, y + 12, countColor);
     }
 
     private void drawBar(GuiGraphics graphics, int y, int percent) {
