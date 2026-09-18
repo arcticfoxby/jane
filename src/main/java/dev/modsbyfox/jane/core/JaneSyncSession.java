@@ -24,6 +24,9 @@ public final class JaneSyncSession {
         public long readyCount() {
             return items.stream().filter(i -> i.state() == RuntimeState.READY).count();
         }
+        public long failedCount() {
+            return items.stream().filter(i -> i.state() == RuntimeState.FAILED).count();
+        }
         public long processedCount() {
             return items.stream().filter(i -> i.item().classification() == ResolutionPlan.Classification.DOWNLOADABLE
                     && i.state() != RuntimeState.WAITING).count();

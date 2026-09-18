@@ -5,6 +5,7 @@ import dev.modsbyfox.jane.core.JaneSyncSession;
 import dev.modsbyfox.jane.core.PendingRecovery;
 import dev.modsbyfox.jane.core.PendingSyncContext;
 import dev.modsbyfox.jane.core.ResolutionPlan;
+import dev.modsbyfox.jane.core.SyncNotice;
 import dev.modsbyfox.jane.core.UpdatePlan;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -101,11 +102,16 @@ final class SyncScreen extends Screen {
             }
             session.finish(null);
             ready = outcome.plan();
-            if (ready != null) notice = Component.translatable("jane.sync.confirm");
-            else if (session.snapshot().resolution().count(ResolutionPlan.Classification.UNRESOLVED) > 0)
-                notice = Component.translatable("jane.sync.manual_remaining", session.snapshot().readyCount(),
-                        session.snapshot().resolution().count(ResolutionPlan.Classification.UNRESOLVED));
-            else notice = Component.translatable("jane.sync.incomplete");
+            JaneSyncSession.Snapshot snapshot = session.snapshot();
+            notice = switch (SyncNotice.select(snapshot, ready != null)) {
+                case CONFIRM -> Component.translatable("jane.sync.confirm");
+                case FAILED_FILES -> Component.translatable("jane.sync.failed_files", snapshot.failedCount());
+                case MANUAL_REMAINING -> Component.translatable("jane.sync.manual_remaining", snapshot.readyCount(),
+                        snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED));
+                case FAILED_AND_MANUAL -> Component.translatable("jane.sync.failed_and_manual",
+                        snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED), snapshot.failedCount());
+                case INCOMPLETE -> Component.translatable("jane.sync.incomplete");
+            };
         }));
     }
 

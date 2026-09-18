@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.modsbyfox.jane.core.ManifestEntry;
+import dev.modsbyfox.jane.core.ModrinthDownload;
 import dev.modsbyfox.jane.core.PathSafety;
 import dev.modsbyfox.jane.core.ResolutionPlan;
 import java.io.ByteArrayOutputStream;
@@ -27,7 +28,7 @@ final class ModrinthService {
     Optional<ResolutionPlan.Source> find(ManifestEntry target) throws IOException, InterruptedException {
         URI uri = URI.create("https://api.modrinth.com/v2/version_file/" + target.sha512() + "?algorithm=sha512");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.0.3.1")
+                .header("User-Agent", "modsbyfox/Jane/1.0.3.2")
                 .header("Accept", "application/json").GET().build();
         HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
@@ -63,25 +64,12 @@ final class ModrinthService {
 
     void download(ResolutionPlan.Source source, ManifestEntry target, java.nio.file.Path destination,
                   BooleanSupplier cancelled, LongConsumer progress) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder(source.uri()).timeout(Duration.ofMinutes(5))
-                .header("User-Agent", "modsbyfox/Jane/1.0.3.1").GET().build();
-        HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        try (InputStream in = response.body(); var out = java.nio.file.Files.newOutputStream(destination,
-                java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
-            if (response.statusCode() != 200) throw new IOException("Modrinth download returned HTTP " + response.statusCode());
-            byte[] buffer = new byte[64 * 1024];
-            long received = 0;
-            int count;
-            while ((count = in.read(buffer)) != -1) {
-                if (cancelled.getAsBoolean()) throw new IOException("Download cancelled");
-                received += count;
-                if (received > target.fileSize()) throw new IOException("Download exceeds declared size");
-                out.write(buffer, 0, count);
-                progress.accept(received);
-            }
-            if (cancelled.getAsBoolean()) throw new IOException("Download cancelled");
-            if (received != target.fileSize()) throw new IOException("Download size mismatch");
-        }
+        ModrinthDownload.download(source, target, destination, cancelled, progress, uri -> {
+            HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(5))
+                    .header("User-Agent", "modsbyfox/Jane/1.0.3.2").GET().build();
+            HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            return new ModrinthDownload.Response(response.statusCode(), response.headers().allValues("Location"), response.body());
+        });
     }
 
     private static byte[] readBounded(InputStream in, int max) throws IOException {
