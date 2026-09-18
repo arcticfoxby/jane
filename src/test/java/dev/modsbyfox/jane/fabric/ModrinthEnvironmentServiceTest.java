@@ -88,7 +88,7 @@ class ModrinthEnvironmentServiceTest {
             assertEquals(Duration.ofSeconds(30), request.timeout().orElseThrow());
             assertEquals("application/json", request.headers().firstValue("Accept").orElseThrow());
             assertEquals("application/json", request.headers().firstValue("Content-Type").orElseThrow());
-            assertEquals("modsbyfox/Jane/1.0.3.2", request.headers().firstValue("User-Agent").orElseThrow());
+            assertEquals("modsbyfox/Jane/1.0.3.3", request.headers().firstValue("User-Agent").orElseThrow());
             return new ModrinthEnvironmentService.Response(200,
                     new ByteArrayInputStream(response(A, "server_only").getBytes(StandardCharsets.UTF_8)));
         });

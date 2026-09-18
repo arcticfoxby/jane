@@ -37,6 +37,10 @@ class WindowsBatchIntegrationTest {
         assertEquals("new", Files.readString(mods.resolve("new.jar")));
         assertEquals("old", Files.readString(gameDir.resolve("jane/backups/" + SERVER + "/" + plan.timestamp() + "/old.jar")));
         assertTrue(Files.isRegularFile(gameDir.resolve("jane/pending/" + ID + "/success.marker")));
+        String log = Files.readString(gameDir.resolve("jane/pending/" + ID + "/update.log"));
+        assertTrue(log.contains("BACKUP create OK"));
+        assertTrue(log.contains("INSTALL create OK"));
+        assertTrue(log.contains("SUCCESS"));
     }
 
     @Test
@@ -58,6 +62,10 @@ class WindowsBatchIntegrationTest {
         assertFalse(Files.exists(mods.resolve("a-new.jar")));
         assertFalse(Files.exists(mods.resolve("b-new.jar")));
         assertTrue(Files.isRegularFile(gameDir.resolve("jane/pending/" + ID + "/failed.marker")));
+        assertFalse(Files.exists(gameDir.resolve("jane/pending/" + ID + "/success.marker")));
+        String log = Files.readString(gameDir.resolve("jane/pending/" + ID + "/update.log"));
+        assertTrue(log.contains("ROLLBACK START"));
+        assertTrue(log.contains("FAILED"));
     }
 
     @Test
@@ -75,6 +83,61 @@ class WindowsBatchIntegrationTest {
         assertNotEquals(0, run(plan));
         assertEquals("a-old", Files.readString(a));
         assertFalse(Files.exists(mods.resolve("b.jar")));
+    }
+
+    @Test
+    void generatedBatRetainsDetailedProgressAndWaitsForManualExit() {
+        UpdatePlan plan = plan(List.of(new UpdatePlan.Operation("create", UpdatePlan.Kind.REPLACE,
+                "old.jar", "a".repeat(128), "new.jar", "b".repeat(128), 3)));
+        String bat = WindowsBatch.generate(plan, 2147483647L);
+        assertTrue(bat.contains("tasklist /FI \"PID eq 2147483647\""));
+        assertTrue(bat.contains("正在等待 Minecraft 关闭..."));
+        assertTrue(bat.contains("Minecraft 已关闭。"));
+        assertTrue(bat.contains("正在备份旧模组... 1/1"));
+        assertTrue(bat.contains("正在安装新模组... 1/1"));
+        assertTrue(bat.contains("更新完成。"));
+        assertTrue(bat.contains("恢复点：" + plan.timestamp()));
+        assertTrue(bat.contains("请您手动重启客户端。"));
+        assertTrue(bat.contains("按任意键退出..."));
+        assertTrue(bat.contains("pause >nul\r\nexit /b 0"));
+        assertTrue(bat.contains("pause >nul\r\nexit /b 1"));
+        assertFalse(bat.contains("timeout /t 5 /nobreak"));
+        assertFalse(bat.contains("taskkill"));
+        assertTrue(bat.contains("setlocal DisableDelayedExpansion"));
+        assertTrue(bat.indexOf("success.marker") < bat.indexOf("echo 更新完成。"));
+        assertTrue(bat.indexOf("echo SUCCESS") < bat.indexOf("echo 更新完成。"));
+    }
+
+    @Test
+    void successMarkerExistsWhileUpdaterWaitsForPlayerKey() throws Exception {
+        Files.createDirectory(gameDir.resolve("mods"));
+        Path stage = Files.createDirectories(gameDir.resolve("jane/staging/" + ID));
+        Path fresh = Files.writeString(stage.resolve("new.jar"), "new");
+        UpdatePlan plan = plan(List.of(new UpdatePlan.Operation("create", UpdatePlan.Kind.ADD,
+                null, null, "new.jar", Hashing.sha512(fresh), Files.size(fresh))));
+        Path pending = Files.createDirectories(gameDir.resolve("jane/pending/" + ID));
+        Files.writeString(pending.resolve("backup.json"), "{}", StandardCharsets.UTF_8);
+        Files.writeString(pending.resolve("update.bat"), WindowsBatch.generate(plan, 2147483647L), StandardCharsets.UTF_8);
+        Process process = new ProcessBuilder("cmd.exe", "/c", "jane\\pending\\" + ID + "\\update.bat")
+                .directory(gameDir.toFile()).redirectErrorStream(true).start();
+        try {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (process.isAlive() && System.nanoTime() < deadline
+                    && (!Files.exists(pending.resolve("success.marker"))
+                    || !Files.exists(pending.resolve("update.log"))
+                    || !Files.readString(pending.resolve("update.log")).contains("SUCCESS"))) {
+                Thread.sleep(20);
+            }
+            assertTrue(Files.exists(pending.resolve("success.marker")), "Installation should finish before the exit prompt");
+            assertTrue(Files.readString(pending.resolve("update.log")).contains("SUCCESS"));
+            assertTrue(process.isAlive(), "CMD should wait for player input after success");
+            process.getOutputStream().write('\n');
+            process.getOutputStream().close();
+            assertTrue(process.waitFor(10, TimeUnit.SECONDS));
+            assertEquals(0, process.exitValue());
+        } finally {
+            if (process.isAlive()) process.destroyForcibly();
+        }
     }
 
     private UpdatePlan plan(List<UpdatePlan.Operation> operations) {

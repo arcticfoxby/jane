@@ -42,7 +42,8 @@ public final class WindowsBatch {
         }
         bat.append("> \"").append(pending).append("\\success.marker\" echo SUCCESS\r\nif errorlevel 1 goto rollback\r\n");
         bat.append(">> \"").append(log).append("\" echo SUCCESS\r\n");
-        bat.append("echo 更新完成。\r\necho 恢复点：").append(plan.timestamp()).append("\r\ntimeout /t 5 /nobreak >nul\r\nexit /b 0\r\n");
+        bat.append("echo 更新完成。\r\necho 恢复点：").append(plan.timestamp())
+                .append("\r\necho.\r\necho 请您手动重启客户端。\r\necho.\r\necho 按任意键退出...\r\npause >nul\r\nexit /b 0\r\n");
         bat.append(":rollback\r\necho 更新失败，正在恢复原文件...\r\n");
         bat.append("if exist \"").append(pending).append("\\success.marker\" del /F /Q \"")
                 .append(pending).append("\\success.marker\" >nul 2>> \"").append(log).append("\"\r\n");
@@ -61,7 +62,7 @@ public final class WindowsBatch {
         }
         bat.append(":failure\r\n> \"").append(pending).append("\\failed.marker\" echo FAILED\r\n");
         bat.append(">> \"").append(log).append("\" echo FAILED\r\n");
-        bat.append("echo 更新失败。请重新启动 Minecraft 查看详细信息。\r\npause\r\nexit /b 1\r\n");
+        bat.append("echo 更新失败。请重新启动 Minecraft 查看详细信息。\r\necho.\r\necho 按任意键退出...\r\npause >nul\r\nexit /b 1\r\n");
         return bat.toString();
     }
 }

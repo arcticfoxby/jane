@@ -28,7 +28,7 @@ final class ModrinthService {
     Optional<ResolutionPlan.Source> find(ManifestEntry target) throws IOException, InterruptedException {
         URI uri = URI.create("https://api.modrinth.com/v2/version_file/" + target.sha512() + "?algorithm=sha512");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.0.3.2")
+                .header("User-Agent", "modsbyfox/Jane/1.0.3.3")
                 .header("Accept", "application/json").GET().build();
         HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
@@ -66,7 +66,7 @@ final class ModrinthService {
                   BooleanSupplier cancelled, LongConsumer progress) throws IOException, InterruptedException {
         ModrinthDownload.download(source, target, destination, cancelled, progress, uri -> {
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(5))
-                    .header("User-Agent", "modsbyfox/Jane/1.0.3.2").GET().build();
+                    .header("User-Agent", "modsbyfox/Jane/1.0.3.3").GET().build();
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             return new ModrinthDownload.Response(response.statusCode(), response.headers().allValues("Location"), response.body());
         });
