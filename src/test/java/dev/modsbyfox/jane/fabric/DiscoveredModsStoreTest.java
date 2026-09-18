@@ -29,7 +29,7 @@ class DiscoveredModsStoreTest {
         assertFalse(content.contains(gameDir.toString()));
         var json = JsonParser.parseString(content).getAsJsonObject();
         assertEquals(1, json.get("schemaVersion").getAsInt());
-        assertEquals("1.0.3.2", json.get("janeVersion").getAsString());
+        assertEquals("1.0.4", json.get("janeVersion").getAsString());
         assertEquals("SYNC_CONSERVATIVE", json.getAsJsonArray("mods").get(0).getAsJsonObject()
                 .get("syncDecision").getAsString());
         var mod = json.getAsJsonArray("mods").get(0).getAsJsonObject();

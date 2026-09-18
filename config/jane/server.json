@@ -1,3 +1,8 @@
 {
-  "mode": "AUTO_DISCOVER"
+  "mode": "AUTO_DISCOVER",
+  "serverProvider": {
+    "enabled": false,
+    "bindPort": 25566,
+    "advertisedPort": 25566
+  }
 }

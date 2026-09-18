@@ -11,11 +11,17 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 
 public final class ManifestCodec {
+    public record LoginOffer(RequiredManifest manifest, ServerProviderOffer provider) { }
     private ManifestCodec() { }
 
     public static byte[] encode(RequiredManifest manifest) throws IOException {
+        return encode(new LoginOffer(manifest, null));
+    }
+
+    public static byte[] encode(LoginOffer offer) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         DataOutputStream out = new DataOutputStream(bytes);
+        RequiredManifest manifest = offer.manifest();
         out.writeInt(manifest.protocol());
         out.writeInt(manifest.entries().size());
         for (ManifestEntry entry : manifest.entries()) {
@@ -25,11 +31,20 @@ public final class ManifestCodec {
             out.writeLong(entry.fileSize());
             writeString(out, entry.sha512());
         }
+        out.writeBoolean(offer.provider() != null);
+        if (offer.provider() != null) {
+            out.writeInt(offer.provider().port());
+            writeString(out, offer.provider().token());
+        }
         if (bytes.size() > RequiredManifest.MAX_PAYLOAD) throw new IOException("Manifest too large");
         return bytes.toByteArray();
     }
 
     public static RequiredManifest decode(byte[] bytes) throws IOException {
+        return decodeOffer(bytes).manifest();
+    }
+
+    public static LoginOffer decodeOffer(byte[] bytes) throws IOException {
         if (bytes == null || bytes.length > RequiredManifest.MAX_PAYLOAD || bytes.length < 8) {
             throw new IOException("Invalid manifest payload size");
         }
@@ -48,8 +63,12 @@ public final class ManifestCodec {
                 String hash = readString(in, 128);
                 entries.add(new ManifestEntry(id, name, version, size, hash));
             }
+            int flag = in.readUnsignedByte();
+            if (flag != 0 && flag != 1) throw new IOException("Invalid provider flag");
+            boolean available = flag == 1;
+            ServerProviderOffer provider = available ? new ServerProviderOffer(in.readInt(), readString(in, 64)) : null;
             if (in.available() != 0) throw new IOException("Trailing manifest bytes");
-            return new RequiredManifest(protocol, entries);
+            return new LoginOffer(new RequiredManifest(protocol, entries), provider);
         } catch (IllegalArgumentException exception) {
             throw new IOException("Invalid manifest entry", exception);
         }

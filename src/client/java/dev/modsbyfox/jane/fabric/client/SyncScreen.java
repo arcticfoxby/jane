@@ -7,6 +7,7 @@ import dev.modsbyfox.jane.core.PendingSyncContext;
 import dev.modsbyfox.jane.core.ResolutionPlan;
 import dev.modsbyfox.jane.core.SyncNotice;
 import dev.modsbyfox.jane.core.UpdatePlan;
+import dev.modsbyfox.jane.core.StagingWorkspace;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
@@ -27,8 +28,12 @@ final class SyncScreen extends Screen {
     private boolean resolveStarted;
     private boolean launching;
     private UpdatePlan ready;
+    private volatile StagingWorkspace workspace;
+    private CompletableFuture<?> activeTask;
+    private boolean stageCallbackHandled;
     private Component notice;
     private Button downloadButton;
+    private Button serverButton;
     private Button finishButton;
 
     SyncScreen(Screen parent, PendingSyncContext context) {
@@ -42,9 +47,12 @@ final class SyncScreen extends Screen {
         clearWidgets();
         int buttonWidth = Math.min(220, width - 40);
         int x = (width - buttonWidth) / 2;
-        int actionY = height - 54;
+        int actionY = height - 53;
         downloadButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.download_trusted"), button -> start())
                 .bounds(x, actionY, buttonWidth, 20).build());
+        serverButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.download_server"), button ->
+                        minecraft.setScreen(new ServerDownloadConfirmScreen(this, session)))
+                .bounds(x, height - 77, buttonWidth, 20).build());
         finishButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.finish"), button -> launch())
                 .bounds(x, actionY, buttonWidth, 20).build());
         int smallWidth = Math.min(130, (width - 50) / 2);
@@ -58,7 +66,8 @@ final class SyncScreen extends Screen {
 
     private void beginResolve() {
         resolveStarted = true;
-        CompletableFuture.runAsync(() -> {
+        session.beginResolution(session.context().results().size());
+        activeTask = CompletableFuture.runAsync(() -> {
             try {
                 StagingService.resolve(session, cancelled::get);
             } catch (InterruptedException exception) {
@@ -76,22 +85,34 @@ final class SyncScreen extends Screen {
     }
 
     private void start() {
-        if (!session.startDownloads()) return;
+        start(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE);
+    }
+
+    void startServerDownloads() {
+        start(ResolutionPlan.Classification.SERVER_DOWNLOADABLE);
+    }
+
+    private void start(ResolutionPlan.Classification provider) {
+        if (!session.startDownloads(provider)) return;
+        stageCallbackHandled = false;
         Path gameDir = FabricLoader.getInstance().getGameDir();
-        CompletableFuture.supplyAsync(() -> {
+        activeTask = CompletableFuture.supplyAsync(() -> {
             try {
-                return StagingService.stage(session, gameDir, cancelled::get);
+                if (workspace == null) workspace = StagingWorkspace.create(gameDir);
+                if (cancelled.get()) throw new InterruptedException("Sync cancelled");
+                return StagingService.stage(session, gameDir, workspace, provider, cancelled::get);
             } catch (Exception exception) {
                 throw new java.util.concurrent.CompletionException(exception);
             }
         }).whenComplete((outcome, error) -> minecraft.execute(() -> {
+            stageCallbackHandled = true;
             if (cancelled.get()) {
                 if (outcome != null && outcome.plan() != null) {
                     CompletableFuture.runAsync(() -> {
                         try { PendingRecovery.abandon(gameDir, new PendingRecovery.Item(outcome.plan().syncId(), outcome.plan(), false, null)); }
                         catch (IOException exception) { LOGGER.error("Could not discard cancelled Jane sync", exception); }
                     });
-                }
+                } else discardWorkspace();
                 return;
             }
             if (error != null) {
@@ -104,12 +125,16 @@ final class SyncScreen extends Screen {
             ready = outcome.plan();
             JaneSyncSession.Snapshot snapshot = session.snapshot();
             notice = switch (SyncNotice.select(snapshot, ready != null)) {
-                case CONFIRM -> Component.translatable("jane.sync.confirm");
+                case CONFIRM -> Component.translatable("jane.sync.confirm", session.context().results().size());
                 case FAILED_FILES -> Component.translatable("jane.sync.failed_files", snapshot.failedCount());
                 case MANUAL_REMAINING -> Component.translatable("jane.sync.manual_remaining", snapshot.readyCount(),
                         snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED));
                 case FAILED_AND_MANUAL -> Component.translatable("jane.sync.failed_and_manual",
                         snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED), snapshot.failedCount());
+                case SERVER_REMAINING -> Component.translatable("jane.sync.server_remaining",
+                        snapshot.resolution().count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE),
+                        snapshot.resolution().count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
+                case SERVER_FAILED -> Component.translatable("jane.sync.server_failed", snapshot.failedCount());
                 case INCOMPLETE -> Component.translatable("jane.sync.incomplete");
             };
         }));
@@ -142,43 +167,60 @@ final class SyncScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics);
         JaneSyncSession.Snapshot snapshot = session.snapshot();
-        downloadButton.visible = ready == null;
-        downloadButton.active = snapshot.resolution() != null && snapshot.error() == null && !snapshot.started()
-                && !snapshot.resolution().downloadQueue().isEmpty();
+        downloadButton.visible = ready == null && snapshot.resolution() != null
+                && snapshot.resolution().count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE) > 0;
+        downloadButton.active = downloadButton.visible && snapshot.error() == null && !snapshot.running()
+                && snapshot.hasWaiting(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE);
+        serverButton.visible = ready == null && snapshot.resolution() != null
+                && snapshot.resolution().count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE) > 0;
+        serverButton.active = serverButton.visible && snapshot.error() == null && !snapshot.running()
+                && snapshot.providerReady(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE)
+                && snapshot.hasWaiting(ResolutionPlan.Classification.SERVER_DOWNLOADABLE);
         finishButton.visible = ready != null;
         finishButton.active = ready != null && !launching && snapshot.canInstall();
-        graphics.drawCenteredString(font, title, width / 2, 16, 0xFFFFFF);
-        graphics.drawCenteredString(font, Component.translatable("jane.sync.mismatch"), width / 2, 36, 0xFFAA55);
+        graphics.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
+        graphics.drawCenteredString(font, Component.translatable("jane.sync.mismatch"), width / 2, 22, 0xFFAA55);
         long missing = session.context().results().stream().filter(r -> r.status() == Comparison.Status.MISSING).count();
         long updates = session.context().results().stream().filter(r -> r.status() == Comparison.Status.VERSION_MISMATCH).count();
         long broken = session.context().results().stream().filter(r -> r.status() == Comparison.Status.HASH_MISMATCH
                 || r.status() == Comparison.Status.FILE_ERROR).count();
-        graphics.drawCenteredString(font, Component.translatable("jane.sync.counts", missing, updates, broken), width / 2, 54, 0xFFFFFF);
+        graphics.drawCenteredString(font, Component.translatable("jane.sync.counts", missing, updates, broken), width / 2, 35, 0xFFFFFF);
         if (snapshot.resolution() == null) {
-            graphics.drawCenteredString(font, Component.translatable(snapshot.error() == null ? "jane.sync.resolving" : "jane.sync.failed"),
-                    width / 2, 92, 0xFFCC77);
+            graphics.drawCenteredString(font, snapshot.error() == null
+                    ? Component.translatable("jane.sync.resolving_progress", snapshot.resolutionProcessed(),
+                    snapshot.resolutionTotal(), snapshot.resolutionPercent())
+                    : Component.translatable("jane.sync.failed"), width / 2, 61, 0xFFCC77);
+            drawBar(graphics, 75, snapshot.resolutionPercent());
         } else {
             ResolutionPlan plan = snapshot.resolution();
-            graphics.drawCenteredString(font, Component.translatable("jane.sync.trusted"), width / 2, 76, 0xFFFFFF);
-            graphics.drawCenteredString(font, Component.translatable("jane.sync.size_count", plan.count(ResolutionPlan.Classification.DOWNLOADABLE),
-                    mib(plan.size(ResolutionPlan.Classification.DOWNLOADABLE))), width / 2, 90, 0xAAFFAA);
-            graphics.drawCenteredString(font, Component.translatable("jane.sync.manual"), width / 2, 111, 0xFFFFFF);
-            graphics.drawCenteredString(font, Component.translatable("jane.sync.size_count", plan.count(ResolutionPlan.Classification.UNRESOLVED),
-                    mib(plan.size(ResolutionPlan.Classification.UNRESOLVED))), width / 2, 125, 0xFFAA55);
+            graphics.drawCenteredString(font, Component.translatable("jane.sync.trusted"), width / 2, 49, 0xFFFFFF);
+            graphics.drawCenteredString(font, Component.translatable("jane.sync.size_count", plan.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE),
+                    mib(plan.size(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE))), width / 2, 61, 0xAAFFAA);
+            boolean hasServerDownloads = plan.count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE) > 0;
+            ResolutionPlan.Classification secondGroup = hasServerDownloads
+                    ? ResolutionPlan.Classification.SERVER_DOWNLOADABLE : ResolutionPlan.Classification.UNRESOLVED;
+            graphics.drawCenteredString(font, Component.translatable(hasServerDownloads
+                    ? "jane.sync.server_downloads" : "jane.sync.manual"), width / 2, 74, 0xFFFFFF);
+            graphics.drawCenteredString(font, Component.translatable("jane.sync.size_count", plan.count(secondGroup),
+                    mib(plan.size(secondGroup))), width / 2, 86, 0xFFCC77);
+            if (hasServerDownloads && plan.count(ResolutionPlan.Classification.UNRESOLVED) > 0)
+                graphics.drawCenteredString(font, Component.translatable("jane.sync.unresolved_count",
+                        plan.count(ResolutionPlan.Classification.UNRESOLVED)), width / 2, 98, 0xFF7777);
             if (snapshot.started()) {
                 int completed = (int) snapshot.processedCount();
-                int total = plan.downloadQueue().size();
-                graphics.drawCenteredString(font, Component.translatable("jane.sync.preparing", completed, total,
-                        snapshot.progressPercent()), width / 2, 144, 0xFFFFFF);
-                int barWidth = Math.min(220, width - 40);
-                int barX = (width - barWidth) / 2;
-                graphics.fill(barX, 158, barX + barWidth, 166, 0xFF555555);
-                graphics.fill(barX, 158, barX + barWidth * snapshot.progressPercent() / 100, 166, 0xFF55AA55);
+                int total = plan.queue(snapshot.activeProvider()).size();
+                graphics.drawCenteredString(font, Component.translatable(snapshot.activeProvider()
+                        == ResolutionPlan.Classification.SERVER_DOWNLOADABLE ? "jane.sync.server_preparing" : "jane.sync.preparing",
+                        completed, total, snapshot.progressPercent()), width / 2, 111, 0xFFFFFF);
+                drawBar(graphics, 124, snapshot.progressPercent());
             }
         }
-        if (notice != null) graphics.drawCenteredString(font,
-                Component.literal(font.plainSubstrByWidth(notice.getString(), Math.max(100, width - 24))),
-                width / 2, height - 69, 0xFFCC77);
+        if (notice != null) {
+            var lines = font.split(notice, Math.max(100, width - 24));
+            int shown = Math.min(2, lines.size());
+            for (int i = 0; i < shown; i++) graphics.drawCenteredString(font, lines.get(i),
+                    width / 2, height - 91 - (shown - 1 - i) * 11, 0xFFCC77);
+        }
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
@@ -186,9 +228,29 @@ final class SyncScreen extends Screen {
         return String.format(java.util.Locale.ROOT, "%.1f", bytes / 1048576.0);
     }
 
+    private void drawBar(GuiGraphics graphics, int y, int percent) {
+        int barWidth = Math.min(220, width - 40);
+        int barX = (width - barWidth) / 2;
+        graphics.fill(barX, y, barX + barWidth, y + 8, 0xFF555555);
+        graphics.fill(barX, y, barX + barWidth * percent / 100, y + 8, 0xFF55AA55);
+    }
+
+    private void discardWorkspace() {
+        StagingWorkspace current = workspace;
+        if (current == null) return;
+        CompletableFuture.runAsync(() -> {
+            try { current.discard(FabricLoader.getInstance().getGameDir()); }
+            catch (IOException exception) { LOGGER.warn("Could not discard Jane staging workspace", exception); }
+        });
+    }
+
     @Override
     public void onClose() {
         if (ready == null) cancelled.set(true);
+        if (ready == null) {
+            CompletableFuture<?> current = activeTask;
+            if (current == null || stageCallbackHandled) discardWorkspace();
+        }
         JaneClient.discardContext(session.context());
         minecraft.setScreen(parent);
     }

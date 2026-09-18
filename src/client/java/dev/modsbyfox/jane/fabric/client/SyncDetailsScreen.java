@@ -16,6 +16,7 @@ final class SyncDetailsScreen extends Screen {
     private final Screen parent;
     private final JaneSyncSession session;
     private boolean downloadsOpen = true;
+    private boolean serverOpen = true;
     private boolean presentOpen;
     private boolean unresolvedOpen = true;
     private int scroll;
@@ -38,7 +39,8 @@ final class SyncDetailsScreen extends Screen {
     private List<Row> rows(JaneSyncSession.Snapshot snapshot) {
         List<Row> rows = new ArrayList<>();
         if (snapshot.resolution() == null) return rows;
-        addGroup(rows, snapshot, ResolutionPlan.Classification.DOWNLOADABLE, downloadsOpen);
+        addGroup(rows, snapshot, ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE, downloadsOpen);
+        addGroup(rows, snapshot, ResolutionPlan.Classification.SERVER_DOWNLOADABLE, serverOpen);
         addGroup(rows, snapshot, ResolutionPlan.Classification.ALREADY_PRESENT, presentOpen);
         addGroup(rows, snapshot, ResolutionPlan.Classification.UNRESOLVED, unresolvedOpen);
         return rows;
@@ -51,7 +53,7 @@ final class SyncDetailsScreen extends Screen {
         for (JaneSyncSession.ItemState item : snapshot.items()) {
             if (item.item().classification() == group) {
                 rows.add(new Row(group, item, group == ResolutionPlan.Classification.UNRESOLVED ? 52
-                        : group == ResolutionPlan.Classification.DOWNLOADABLE ? 38 : 29));
+                        : item.item().source() != null ? 38 : 29));
             }
         }
     }
@@ -102,12 +104,14 @@ final class SyncDetailsScreen extends Screen {
     private void drawHeader(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot, ResolutionPlan.Classification group,
                             int left, int right, int y, int mouseX, int mouseY) {
         boolean open = switch (group) {
-            case DOWNLOADABLE -> downloadsOpen;
+            case MODRINTH_DOWNLOADABLE -> downloadsOpen;
+            case SERVER_DOWNLOADABLE -> serverOpen;
             case ALREADY_PRESENT -> presentOpen;
             case UNRESOLVED -> unresolvedOpen;
         };
         String key = switch (group) {
-            case DOWNLOADABLE -> "jane.details.downloadable";
+            case MODRINTH_DOWNLOADABLE -> "jane.details.downloadable";
+            case SERVER_DOWNLOADABLE -> "jane.details.server_downloadable";
             case ALREADY_PRESENT -> "jane.details.present";
             case UNRESOLVED -> "jane.details.unresolved";
         };
@@ -122,19 +126,21 @@ final class SyncDetailsScreen extends Screen {
         var comparison = state.item().comparison();
         var target = comparison.required();
         graphics.fill(left, y, right, y + (state.item().classification() == ResolutionPlan.Classification.UNRESOLVED ? 50
-                : state.item().classification() == ResolutionPlan.Classification.DOWNLOADABLE ? 36 : 27), 0x88000000);
+                : state.item().source() != null ? 36 : 27), 0x88000000);
         int textLeft = left + 6;
         int textRight = right - 6;
         graphics.drawString(font, fit(target.displayName(), textRight - textLeft), textLeft, y + 3, 0xFFFFFF);
         if (state.item().classification() == ResolutionPlan.Classification.ALREADY_PRESENT) {
             graphics.drawString(font, fit(target.version(), textRight - textLeft - 90), textLeft, y + 16, 0xCCCCCC);
             right(graphics, Component.translatable("jane.details.matched"), textRight, y + 16, 0xAAFFAA);
-        } else if (state.item().classification() == ResolutionPlan.Classification.DOWNLOADABLE) {
+        } else if (state.item().source() != null) {
             String reason = Component.translatable("jane.status." + comparison.status().name().toLowerCase(java.util.Locale.ROOT)).getString();
             String versions = comparison.local() == null ? target.version() : comparison.local().version() + " → " + target.version();
             graphics.drawString(font, fit(reason + "  " + versions, textRight - textLeft), textLeft, y + 15, 0xCCCCCC);
             String stateText = runtime(state);
-            graphics.drawString(font, fit("Modrinth ✓  " + SyncScreen.mib(target.fileSize()) + " MiB", textRight - textLeft - 90),
+            String sourceName = state.item().classification() == ResolutionPlan.Classification.SERVER_DOWNLOADABLE
+                    ? Component.translatable("jane.details.current_server").getString() : "Modrinth ✓";
+            graphics.drawString(font, fit(sourceName + "  " + SyncScreen.mib(target.fileSize()) + " MiB", textRight - textLeft - 90),
                     textLeft, y + 27, 0xAAFFAA);
             right(graphics, Component.literal(stateText), textRight, y + 27, 0xFFCC77);
         } else {
@@ -190,7 +196,8 @@ final class SyncDetailsScreen extends Screen {
         for (Row row : rows) {
             if (row.item() == null && mouseY >= y && mouseY < y + row.height()) {
                 switch (row.group()) {
-                    case DOWNLOADABLE -> downloadsOpen = !downloadsOpen;
+                    case MODRINTH_DOWNLOADABLE -> downloadsOpen = !downloadsOpen;
+                    case SERVER_DOWNLOADABLE -> serverOpen = !serverOpen;
                     case ALREADY_PRESENT -> presentOpen = !presentOpen;
                     case UNRESOLVED -> unresolvedOpen = !unresolvedOpen;
                 }

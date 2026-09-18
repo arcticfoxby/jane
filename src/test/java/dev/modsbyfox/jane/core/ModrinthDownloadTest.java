@@ -236,11 +236,11 @@ class ModrinthDownloadTest {
     void aircraft307FixtureReachesVerifiedReadyAndUpdatePlan() throws Exception {
         byte[] bytes = bytes();
         ManifestEntry target = target(bytes, bytes.length);
-        RequiredManifest manifest = new RequiredManifest(1, List.of(target));
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, List.of(target));
         var comparisons = Comparison.compare(manifest, Map.of(), path -> target.sha512());
         JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons));
         session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> Optional.of(source(entry))));
-        assertEquals(ResolutionPlan.Classification.DOWNLOADABLE, session.snapshot().items().get(0).item().classification());
+        assertEquals(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE, session.snapshot().items().get(0).item().classification());
         assertTrue(session.startDownloads());
         session.update(target.modId(), JaneSyncSession.RuntimeState.DOWNLOADING, 0);
         Path part = dir.resolve("immersive_aircraft.jar.part");

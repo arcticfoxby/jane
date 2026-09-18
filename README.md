@@ -1,4 +1,4 @@
-# 简 (Jane) 1.0.3.3
+# 简 (Jane) 1.0.4
 
 Jane aligns the server Mod JARs that remote clients require, and conservatively includes JARs whose client need cannot be determined. It does not synchronize the whole `mods` folder. Extra client mods, such as Sodium, Iris, maps, HUD mods, and ReplayMod, are left alone.
 
@@ -6,7 +6,7 @@ Jane aligns the server Mod JARs that remote clients require, and conservatively 
 - Install **Fabric Loader**, **Fabric API**, and **Jane** on both the dedicated server and client. Jane does not install these prerequisites.
 - Jane is transparent when its client connects to a server without Jane, and does nothing in singleplayer.
 - The server supplies mod ID, version, top-level JAR size, and SHA-512. The client compares only those required entries; equal version strings with different JAR hashes do not pass.
-- V1 automatic lookup uses only the exact SHA-512 on **Modrinth**. If it is absent, install the target file manually. Downloads are staged and verified before any replacement is offered.
+- Public-source lookup uses only the exact SHA-512 on **Modrinth**. If the exact file is absent and this server has ServerProvider enabled, Jane offers an explicit, per-session server download confirmation. Downloads are staged and verified before any replacement is offered.
 - Exact-hash Modrinth downloads can follow a limited number of HTTPS redirects between explicitly approved Modrinth CDN hosts. Jane validates every hop, then checks the final body against the server's exact file size and SHA-512 before staging it.
 - On Windows, after the player confirms, Jane immediately opens a separate CMD updater. It waits for that Minecraft process to exit, displays backup and installation progress, then keeps the window open until the player presses a key. Jane prompts the player to restart Minecraft manually; it never kills Java processes or restarts the game. Failed updates still attempt rollback.
 - Successful backups are kept separately by locally generated server ID, up to **five** restore points per server. Pending updates are checked on the next launch; they never run again silently.
@@ -23,7 +23,12 @@ On first dedicated-server start, Jane creates `<gameDir>/config/jane/server.json
 
 ```json
 {
-  "mode": "AUTO_DISCOVER"
+  "mode": "AUTO_DISCOVER",
+  "serverProvider": {
+    "enabled": false,
+    "bindPort": 25566,
+    "advertisedPort": 25566
+  }
 }
 ```
 
@@ -31,9 +36,11 @@ A copy is in [`config/jane/server.json`](config/jane/server.json). Jane automati
 
 Fabric `SERVER` mods are excluded before hashing or network lookup. Fabric `CLIENT` mods are also excluded, with a warning because they are unexpected on a dedicated server. For universal mods, Jane hashes the actual top-level JAR and queries Modrinth by exact SHA-512. `client_and_server` enters the client manifest. Server-only, client-optional, client-only, and singleplayer-only environments are excluded. A successful lookup with no matching hash, `unknown`, or a future environment value enters the manifest **conservatively**. This may require a client to install a mod whose client need is not yet confirmed. It never means an unknown JAR is safe to run.
 
-Legacy `requiredMods` and `environmentOverrides` fields remain accepted but are ignored; Jane never deletes them. The write-only diagnostic `<gameDir>/config/jane/discovered-mods.json` records each discovered mod's decision and reason without absolute paths. It is never used as input. Modrinth requests are split into batches of at most 100 hashes; a network error, non-200 response, oversized body, or malformed metadata fails the entire manifest. Protocol 1 supports at most 128 final client-sync entries.
+Legacy `requiredMods` and `environmentOverrides` fields remain accepted but are ignored; Jane never deletes them. The write-only diagnostic `<gameDir>/config/jane/discovered-mods.json` records each discovered mod's decision and reason without absolute paths. It is never used as input. Modrinth requests are split into batches of at most 100 hashes; a network error, non-200 response, oversized body, or malformed metadata fails the entire manifest. Protocol 2 supports at most 128 final client-sync entries and rejects older Protocol 1 clients.
 
-An exact hash absent from Modrinth still enters the server's required manifest, but the current client marks it `UNRESOLVED` for manual handling. Jane 1.0.3.3 has no ServerProvider or server-to-client JAR transfer; that would require a separate future design and explicit player confirmation.
+ServerProvider is disabled by default. When enabled, it listens on the configured extra TCP `bindPort`; startup fails if this port cannot be opened. The client uses the captured Minecraft server host plus `advertisedPort`, never a host supplied by server configuration. For example, a Minecraft connection to `frp-day.com:41476` can use `bindPort: 25566` and `advertisedPort: 41477` with an administrator-managed FRP mapping from `frp-day.com:41477` to local port 25566. NAT, router, firewall, and FRP TCP mapping must be configured by the administrator; Jane does not open them automatically.
+
+Each login receives a different memory-only 256-bit token valid for ten minutes. It permits only hashes in that login's required manifest, and only manifest JARs can be served. ServerProvider uses plain TCP: SHA-512 checks protect file integrity, but transport is **not encrypted**. The player must confirm the exact server file list before any ServerProvider connection. A Modrinth lookup failure remains unresolved; an absent exact hash can be offered by ServerProvider. A failed server transfer cannot create a pending install. Public and server files share one staging workspace and one final update plan.
 
 The client never sends its complete mod list. A Jane server sends a login query; the client responds only with PASS, MISMATCH, or PROTOCOL_ERROR. On mismatch the login ends before the sync screen opens. Extra client mods do not block login. Server-provided URLs, paths, filenames, and commands are never accepted.
 

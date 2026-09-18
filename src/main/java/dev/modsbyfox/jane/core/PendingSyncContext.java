@@ -4,9 +4,18 @@ import java.util.List;
 import java.util.Objects;
 
 public record PendingSyncContext(String serverAddress, String serverId, RequiredManifest manifest,
-                                 List<Comparison.Result> results) {
+                                 List<Comparison.Result> results, ServerProviderOffer provider) {
     public PendingSyncContext(String serverAddress, RequiredManifest manifest, List<Comparison.Result> results) {
-        this(ServerIdentity.normalize(serverAddress), ServerIdentity.id(serverAddress), manifest, results);
+        this(serverAddress, manifest, results, null);
+    }
+
+    public PendingSyncContext(String serverAddress, RequiredManifest manifest, List<Comparison.Result> results,
+                              ServerProviderOffer provider) {
+        this(ServerIdentity.normalize(serverAddress), ServerIdentity.id(serverAddress), manifest, results, provider);
+    }
+
+    public PendingSyncContext(String serverAddress, String serverId, RequiredManifest manifest, List<Comparison.Result> results) {
+        this(serverAddress, serverId, manifest, results, null);
     }
 
     public PendingSyncContext {

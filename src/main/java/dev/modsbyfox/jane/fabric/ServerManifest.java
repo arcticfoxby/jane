@@ -26,11 +26,16 @@ final class ServerManifest {
     record Classified(ServerDiscovery.Discovered discovered, JarData jar, String modrinthEnvironment,
                       ClientSyncDecision decision, String reason) { }
     record BuildResult(RequiredManifest manifest, List<Classified> classified) { }
+    record Prepared(RequiredManifest manifest, Map<String, Path> files) { }
     private record Hashed(ServerDiscovery.Discovered discovered, JarData jar) { }
 
     private ServerManifest() { }
 
     static RequiredManifest build() throws IOException {
+        return prepare().manifest();
+    }
+
+    static Prepared prepare() throws IOException {
         FabricLoader loader = FabricLoader.getInstance();
         Path gameDir = loader.getGameDir();
         ServerConfig.Config config = ServerConfig.read(gameDir, loader.getConfigDir());
@@ -48,7 +53,15 @@ final class ServerManifest {
                 + ", excluded=" + (result.classified().size() - sync - conservative)
                 + ", nestedSkipped=" + discovery.nestedSkipped() + ", systemSkipped=" + discovery.systemSkipped()
                 + ", manifestEntries=" + result.manifest().entries().size());
-        return result.manifest();
+        Map<String, Path> files = new java.util.HashMap<>();
+        Set<String> requiredIds = result.manifest().entries().stream().map(ManifestEntry::modId)
+                .collect(java.util.stream.Collectors.toSet());
+        for (Classified item : result.classified()) {
+            if (requiredIds.contains(item.discovered().candidate().modId())) {
+                files.put(item.jar().sha512(), item.discovered().jar());
+            }
+        }
+        return new Prepared(result.manifest(), Map.copyOf(files));
     }
 
     static BuildResult build(List<ServerDiscovery.Discovered> discovered, BatchLookup lookup) throws IOException {
@@ -96,7 +109,7 @@ final class ServerManifest {
                     throw new IOException("Invalid discovered manifest entry: " + item.discovered().candidate().modId(), exception);
                 }
                 if (required.size() > RequiredManifest.MAX_ENTRIES) {
-                    throw new IOException("Jane discovered more client-sync entries than Protocol 1 supports");
+                    throw new IOException("Jane discovered more client-sync entries than Protocol 2 supports");
                 }
             }
         }

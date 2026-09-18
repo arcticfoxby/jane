@@ -1,26 +1,24 @@
 package dev.modsbyfox.jane.fabric.client;
 
-import dev.modsbyfox.jane.core.BackupTimestamp;
 import dev.modsbyfox.jane.core.Comparison;
 import dev.modsbyfox.jane.core.Hashing;
 import dev.modsbyfox.jane.core.JaneSyncSession;
 import dev.modsbyfox.jane.core.ManifestEntry;
 import dev.modsbyfox.jane.core.PathSafety;
-import dev.modsbyfox.jane.core.PendingStore;
 import dev.modsbyfox.jane.core.ResolutionPlan;
 import dev.modsbyfox.jane.core.StagedFileVerifier;
+import dev.modsbyfox.jane.core.StagingWorkspace;
+import dev.modsbyfox.jane.core.ServerProviderClient;
 import dev.modsbyfox.jane.core.UpdatePlan;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
@@ -43,30 +41,32 @@ final class StagingService {
                 LOGGER.warn("Jane source lookup failed for {}: {}", target.modId(), exception.getMessage());
                 throw exception;
             }
-        });
+        }, session.context().provider() != null, session::resolutionProgress);
         if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
         session.publishResolution(resolution);
         for (ResolutionPlan.Item item : resolution.items()) {
             LOGGER.info("Jane resolve {} {} hash {}", item.comparison().required().modId(), item.classification(),
                     item.comparison().required().sha512().substring(0, 12));
         }
-        LOGGER.info("Jane resolve complete: {} trusted downloads, {} unresolved", resolution.count(ResolutionPlan.Classification.DOWNLOADABLE),
+        LOGGER.info("Jane resolve complete: {} Modrinth, {} ServerProvider, {} unresolved",
+                resolution.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE),
+                resolution.count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE),
                 resolution.count(ResolutionPlan.Classification.UNRESOLVED));
     }
 
-    static Outcome stage(JaneSyncSession session, Path gameDir, BooleanSupplier cancelled) throws IOException, InterruptedException {
+    static Outcome stage(JaneSyncSession session, Path gameDir, StagingWorkspace workspace,
+                         ResolutionPlan.Classification provider, BooleanSupplier cancelled) throws IOException, InterruptedException {
         ResolutionPlan resolution = session.snapshot().resolution();
         if (resolution == null) throw new IOException("Resolution has not completed");
         LOGGER.info("Using captured Jane server context {} for staging", session.context().serverId().substring(0, 12));
-        List<ResolutionPlan.Item> queue = resolution.downloadQueue();
+        List<ResolutionPlan.Item> queue = resolution.queue(provider);
         if (queue.isEmpty()) return new Outcome(null);
-        String syncId = UUID.randomUUID().toString();
-        Path staging = PathSafety.janeDirectory(gameDir, "staging", syncId);
+        Path staging = workspace.directory();
         ModrinthService modrinth = new ModrinthService();
-        List<UpdatePlan.Operation> operations = new ArrayList<>();
         Map<String, Integer> fileNames = new HashMap<>();
         Set<String> oldNames = new HashSet<>();
-        for (ResolutionPlan.Item item : queue) fileNames.merge(item.source().name().toLowerCase(Locale.ROOT), 1, Integer::sum);
+        for (ResolutionPlan.Item item : resolution.items()) if (item.source() != null)
+            fileNames.merge(item.source().name().toLowerCase(Locale.ROOT), 1, Integer::sum);
         for (Comparison.Result result : session.context().results()) {
             if (result.local() != null && result.local().jar() != null) {
                 oldNames.add(result.local().jar().getFileName().toString().toLowerCase(Locale.ROOT));
@@ -90,22 +90,29 @@ final class StagingService {
                 }
                 session.update(modId, JaneSyncSession.RuntimeState.DOWNLOADING, 0);
                 LOGGER.info("Jane download started for {} hash {}", modId, target.sha512().substring(0, 12));
-                modrinth.download(item.source(), target, part, cancelled, bytes -> {
+                java.util.function.LongConsumer progress = bytes -> {
                     received.set(bytes);
                     session.update(modId, JaneSyncSession.RuntimeState.DOWNLOADING, bytes);
-                });
+                };
+                if (provider == ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE) {
+                    modrinth.download(item.source(), target, part, cancelled, progress);
+                } else {
+                    ServerProviderClient.download(session.context().serverAddress(), session.context().provider(),
+                            target, part, cancelled, progress);
+                }
                 LOGGER.info("Jane download complete; verifying {}", modId);
                 UpdatePlan.Operation operation = new UpdatePlan.Operation(modId, local == null ? UpdatePlan.Kind.ADD : UpdatePlan.Kind.REPLACE,
                         local == null ? null : local.jar().getFileName().toString(), oldHash,
                         name, target.sha512(), target.fileSize());
                 StagedFileVerifier.verifyAndStage(part, staged, target, session, cancelled);
-                operations.add(operation);
+                workspace.add(operation);
                 LOGGER.info("Jane verify succeeded; staged READY {}", modId);
             } catch (InterruptedException exception) {
                 cleanupPart(part);
                 throw exception;
             } catch (IOException | RuntimeException exception) {
                 cleanupPart(part);
+                if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
                 boolean verifying = session.snapshot().items().stream().anyMatch(state ->
                         state.item().comparison().required().modId().equals(modId)
                                 && (state.state() == JaneSyncSession.RuntimeState.VERIFYING
@@ -114,20 +121,14 @@ final class StagingService {
                 LOGGER.warn("Jane {} failed for {}: {}", verifying ? "verify" : "download", modId, exception.getMessage());
             }
         }
-        boolean allReady = resolution.count(ResolutionPlan.Classification.UNRESOLVED) == 0
-                && session.snapshot().items().stream().allMatch(item ->
-                item.item().classification() == ResolutionPlan.Classification.ALREADY_PRESENT
-                        || item.state() == JaneSyncSession.RuntimeState.READY);
-        if (!allReady) {
+        if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
+        UpdatePlan plan = workspace.prepareIfComplete(gameDir, session, cancelled);
+        if (plan == null) {
             LOGGER.info("Jane preparation complete; pending install withheld ({} unresolved, {} ready, {} requested)",
                     resolution.count(ResolutionPlan.Classification.UNRESOLVED), session.snapshot().readyCount(), queue.size());
             return new Outcome(null);
         }
-        if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
-        String timestamp = BackupTimestamp.next(gameDir, session.context().serverId());
-        UpdatePlan plan = new UpdatePlan(syncId, session.context().serverId(), timestamp, operations);
-        PendingStore.create(gameDir, plan);
-        LOGGER.info("Jane preparation complete; pending install ready for {}", syncId);
+        LOGGER.info("Jane preparation complete; pending install ready for {}", workspace.syncId());
         return new Outcome(plan);
     }
 

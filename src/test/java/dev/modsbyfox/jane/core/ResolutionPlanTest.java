@@ -23,7 +23,7 @@ class ResolutionPlanTest {
     private static List<Comparison.Result> missing(int count) {
         List<ManifestEntry> entries = new ArrayList<>();
         for (int i = 0; i < count; i++) entries.add(entry(i, 100 + i));
-        return Comparison.compare(new RequiredManifest(1, entries), Map.of(), path -> HASH);
+        return Comparison.compare(new RequiredManifest(RequiredManifest.PROTOCOL, entries), Map.of(), path -> HASH);
     }
 
     private static ResolutionPlan.Source source(ManifestEntry entry) {
@@ -38,7 +38,7 @@ class ResolutionPlanTest {
             return entry.modId().equals("mod2") ? Optional.empty() : Optional.of(source(entry));
         });
         assertEquals(7, visited.size());
-        assertEquals(6, plan.count(ResolutionPlan.Classification.DOWNLOADABLE));
+        assertEquals(6, plan.count(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE));
         assertEquals(1, plan.count(ResolutionPlan.Classification.UNRESOLVED));
         assertEquals(6, plan.downloadQueue().size());
         assertFalse(plan.downloadQueue().stream().anyMatch(i -> i.comparison().required().modId().equals("mod2")));
@@ -50,14 +50,50 @@ class ResolutionPlanTest {
             if (entry.modId().equals("mod1")) throw new IOException("HTTP 404");
             return Optional.of(source(entry));
         });
-        assertEquals(List.of(ResolutionPlan.Classification.DOWNLOADABLE, ResolutionPlan.Classification.UNRESOLVED,
-                ResolutionPlan.Classification.DOWNLOADABLE), plan.items().stream().map(ResolutionPlan.Item::classification).toList());
+        assertEquals(List.of(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE, ResolutionPlan.Classification.UNRESOLVED,
+                ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE), plan.items().stream().map(ResolutionPlan.Item::classification).toList());
+    }
+
+    @Test
+    void absentPublicHashesUseServerButLookupFailuresStayUnresolved() throws Exception {
+        List<Integer> progress = new ArrayList<>();
+        ResolutionPlan plan = ResolutionPlan.resolve(missing(3), entry -> {
+            if (entry.modId().equals("mod1")) return Optional.empty();
+            if (entry.modId().equals("mod2")) throw new IOException("Modrinth unavailable");
+            return Optional.of(source(entry));
+        }, true, progress::add);
+        assertEquals(List.of(1, 2, 3), progress);
+        assertEquals(List.of(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE,
+                ResolutionPlan.Classification.SERVER_DOWNLOADABLE, ResolutionPlan.Classification.UNRESOLVED),
+                plan.items().stream().map(ResolutionPlan.Item::classification).toList());
+        assertEquals(1, plan.downloadQueue().size());
+        assertEquals(1, plan.queue(ResolutionPlan.Classification.SERVER_DOWNLOADABLE).size());
+        assertNull(plan.queue(ResolutionPlan.Classification.SERVER_DOWNLOADABLE).get(0).source().uri());
+    }
+
+    @Test
+    void resolutionProgressIncludesAlreadyPresentEntries() throws Exception {
+        ManifestEntry present = entry(0, 100);
+        List<ManifestEntry> entries = new ArrayList<>();
+        entries.add(present);
+        for (int i = 1; i < 41; i++) entries.add(entry(i, 100 + i));
+        List<Comparison.Result> compared = Comparison.compare(new RequiredManifest(RequiredManifest.PROTOCOL, entries),
+                Map.of("mod0", new Comparison.LocalMod("mod0", "1.0", Path.of("mod0.jar"))), path -> HASH);
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org",
+                new RequiredManifest(RequiredManifest.PROTOCOL, entries), compared));
+        session.beginResolution(41);
+        session.publishResolution(ResolutionPlan.resolve(compared, item -> Optional.empty(), true, session::resolutionProgress));
+        assertEquals(41, session.snapshot().resolutionProcessed());
+        assertEquals(41, session.snapshot().resolutionTotal());
+        assertEquals(100, session.snapshot().resolutionPercent());
+        assertEquals(1, session.snapshot().resolution().count(ResolutionPlan.Classification.ALREADY_PRESENT));
+        assertEquals(40, session.snapshot().resolution().count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
     }
 
     @Test
     void exactPresentRequiredModIsExcludedFromDownloadQueue() throws Exception {
         ManifestEntry required = entry(0, 100);
-        RequiredManifest manifest = new RequiredManifest(1, List.of(required));
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, List.of(required));
         var installed = Map.of(required.modId(), new Comparison.LocalMod(required.modId(), required.version(), Path.of("mod0.jar")),
                 "sodium", new Comparison.LocalMod("sodium", "1", Path.of("sodium.jar")));
         ResolutionPlan plan = ResolutionPlan.resolve(Comparison.compare(manifest, installed, path -> HASH), entry -> {
@@ -73,8 +109,8 @@ class ResolutionPlanTest {
     void progressUsesBytesRatherThanCompletedFileCount() throws Exception {
         ManifestEntry a = entry(0, 100);
         ManifestEntry b = entry(1, 900);
-        List<Comparison.Result> comparisons = Comparison.compare(new RequiredManifest(1, List.of(a, b)), Map.of(), path -> HASH);
-        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", new RequiredManifest(1, List.of(a, b)), comparisons));
+        List<Comparison.Result> comparisons = Comparison.compare(new RequiredManifest(RequiredManifest.PROTOCOL, List.of(a, b)), Map.of(), path -> HASH);
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", new RequiredManifest(RequiredManifest.PROTOCOL, List.of(a, b)), comparisons));
         session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> Optional.of(source(entry))));
         assertTrue(session.startDownloads());
         assertFalse(session.startDownloads());
@@ -90,8 +126,8 @@ class ResolutionPlanTest {
         Path part = temp.resolve("file.jar.part");
         Files.writeString(part, "not the expected content");
         ManifestEntry target = new ManifestEntry("example", "Example", "1", Files.size(part), HASH);
-        List<Comparison.Result> comparisons = Comparison.compare(new RequiredManifest(1, List.of(target)), Map.of(), path -> HASH);
-        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", new RequiredManifest(1, List.of(target)), comparisons));
+        List<Comparison.Result> comparisons = Comparison.compare(new RequiredManifest(RequiredManifest.PROTOCOL, List.of(target)), Map.of(), path -> HASH);
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", new RequiredManifest(RequiredManifest.PROTOCOL, List.of(target)), comparisons));
         session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> Optional.of(source(entry))));
         session.startDownloads();
         session.update("example", JaneSyncSession.RuntimeState.DOWNLOADING, target.fileSize());
@@ -108,7 +144,7 @@ class ResolutionPlanTest {
         Path part = temp.resolve("file.jar.part");
         Files.writeString(part, "trusted bytes");
         ManifestEntry target = new ManifestEntry("example", "Example", "1", Files.size(part), Hashing.sha512(part));
-        RequiredManifest manifest = new RequiredManifest(1, List.of(target));
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, List.of(target));
         List<Comparison.Result> comparisons = Comparison.compare(manifest, Map.of(), path -> HASH);
         JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons));
         session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> Optional.of(source(entry))));
@@ -126,7 +162,7 @@ class ResolutionPlanTest {
     @Test
     void fiveReadyOneFailedOneUnresolvedCannotInstall() throws Exception {
         List<Comparison.Result> comparisons = missing(7);
-        RequiredManifest manifest = new RequiredManifest(1, comparisons.stream().map(Comparison.Result::required).toList());
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, comparisons.stream().map(Comparison.Result::required).toList());
         JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons));
         session.publishResolution(ResolutionPlan.resolve(comparisons, entry ->
                 entry.modId().equals("mod6") ? Optional.empty() : Optional.of(source(entry))));

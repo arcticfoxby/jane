@@ -1,6 +1,7 @@
 package dev.modsbyfox.jane.core;
 
 import java.util.Locale;
+import java.net.InetSocketAddress;
 
 public final class ServerIdentity {
     private static final int DEFAULT_PORT = 25565;
@@ -46,6 +47,14 @@ public final class ServerIdentity {
 
     public static String id(String address) {
         return Hashing.sha256(normalize(address));
+    }
+
+    public static InetSocketAddress providerEndpoint(String capturedAddress, int port) {
+        if (port < 1 || port > 65535) throw new IllegalArgumentException("Invalid provider port");
+        String normalized = normalize(capturedAddress);
+        String host = normalized.substring(0, normalized.lastIndexOf(':'));
+        if (host.startsWith("[")) host = host.substring(1, host.length() - 1);
+        return new InetSocketAddress(host, port);
     }
 
     private static int parsePort(String value) {

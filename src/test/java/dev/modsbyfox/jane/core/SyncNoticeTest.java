@@ -14,7 +14,7 @@ class SyncNoticeTest {
     private JaneSyncSession session(boolean unresolved) throws Exception {
         ManifestEntry downloadable = new ManifestEntry("aircraft", "Aircraft", "1", 10, HASH);
         ManifestEntry manual = new ManifestEntry("manual", "Manual", "1", 10, HASH);
-        RequiredManifest manifest = new RequiredManifest(1, unresolved ? List.of(downloadable, manual) : List.of(downloadable));
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, unresolved ? List.of(downloadable, manual) : List.of(downloadable));
         var comparisons = Comparison.compare(manifest, Map.of(), path -> HASH);
         JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons));
         session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> entry.modId().equals("manual")
@@ -30,7 +30,7 @@ class SyncNoticeTest {
         session.update("aircraft", JaneSyncSession.RuntimeState.FAILED, 0);
         session.finish(null);
         assertEquals(1, session.snapshot().failedCount());
-        assertEquals(ResolutionPlan.Classification.DOWNLOADABLE,
+        assertEquals(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE,
                 session.snapshot().items().get(0).item().classification());
         assertEquals(SyncNotice.Kind.FAILED_FILES, SyncNotice.select(session.snapshot(), false));
     }

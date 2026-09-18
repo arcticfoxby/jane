@@ -60,13 +60,14 @@ public final class JaneClient implements ClientModInitializer {
             }
             return CompletableFuture.supplyAsync(() -> {
                 try {
-                    RequiredManifest manifest = ManifestCodec.decode(payload);
+                    ManifestCodec.LoginOffer offer = ManifestCodec.decodeOffer(payload);
+                    RequiredManifest manifest = offer.manifest();
                     List<Comparison.Result> results = compare(manifest);
                     if (Comparison.passed(results)) {
                         return response(PENDING.markPassed(handler) ? 0 : 2);
                     }
                     if (serverAddress == null) throw new IOException("Jane sync is unavailable for a local world");
-                    PendingSyncContext context = new PendingSyncContext(serverAddress, manifest, results);
+                    PendingSyncContext context = new PendingSyncContext(serverAddress, manifest, results, offer.provider());
                     if (!PENDING.replace(handler, context)) return response(2);
                     LOGGER.info("Captured Jane sync context for server {}", context.serverId().substring(0, 12));
                     return response(1);

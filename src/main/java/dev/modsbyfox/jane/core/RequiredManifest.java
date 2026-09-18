@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Set;
 
 public record RequiredManifest(int protocol, List<ManifestEntry> entries) {
-    public static final int PROTOCOL = 1;
+    public static final int PROTOCOL = 2;
     public static final int MAX_ENTRIES = 128;
     public static final int MAX_PAYLOAD = 64 * 1024;
 

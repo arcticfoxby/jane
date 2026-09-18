@@ -26,6 +26,9 @@ class ServerIdentityTest {
         assertEquals("[2001:db8::1]:25565", ServerIdentity.normalize(" [2001:DB8::1] "));
         assertEquals(ServerIdentity.id("[2001:DB8::1]"), ServerIdentity.id("[2001:db8::1]:25565"));
         assertEquals("[::1]:25565", ServerIdentity.normalize("::1"));
+        org.junit.jupiter.api.Assertions.assertTrue(ServerIdentity.providerEndpoint("[::1]:25565", 41477)
+                .getAddress() instanceof java.net.Inet6Address);
+        assertEquals(41477, ServerIdentity.providerEndpoint("[::1]:25565", 41477).getPort());
     }
 
     @Test
@@ -35,5 +38,6 @@ class ServerIdentityTest {
         assertThrows(IllegalArgumentException.class, () -> ServerIdentity.normalize("play.example.com:0"));
         assertThrows(IllegalArgumentException.class, () -> ServerIdentity.normalize("play.example.com:65536"));
         assertThrows(IllegalArgumentException.class, () -> ServerIdentity.normalize("play.example.com:abc"));
+        assertThrows(IllegalArgumentException.class, () -> ServerIdentity.providerEndpoint("example.org", 0));
     }
 }
