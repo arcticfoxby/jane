@@ -2,88 +2,86 @@ package dev.modsbyfox.jane.fabric;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import dev.modsbyfox.jane.core.RequiredEnvironment;
+import dev.modsbyfox.jane.core.ClientSyncDecision;
+import dev.modsbyfox.jane.core.Hashing;
 import dev.modsbyfox.jane.core.RequiredManifest;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ServerManifestTest {
-    private static String hash(char digit) { return Character.toString(digit).repeat(128); }
+    @TempDir Path gameDir;
 
-    private static ServerManifest.Candidate candidate(String id, ModEnvironment environment, String hash) {
-        return new ServerManifest.Candidate(environment, "Name " + id, "1.2.3", () -> {
-            if (environment != ModEnvironment.UNIVERSAL) fail("Fabric side-only mod must not be hashed");
-            return new ServerManifest.JarData(1234, hash);
-        });
+    private ServerDiscovery.Discovered item(String id, ModEnvironment environment) throws IOException {
+        Path jar = Files.write(gameDir.resolve(id + ".jar"), id.getBytes(StandardCharsets.UTF_8));
+        return new ServerDiscovery.Discovered(new ServerDiscovery.Candidate(id, "Name " + id, "1.2.3",
+                environment, false, List.of(jar)), jar);
     }
 
     @Test
-    void filtersSideOnlyAndOptionalBeforeProtocolOneManifest() throws Exception {
-        Map<String, ServerManifest.Candidate> candidates = Map.of(
-                "server", candidate("server", ModEnvironment.SERVER, hash('a')),
-                "client", candidate("client", ModEnvironment.CLIENT, hash('b')),
-                "common", candidate("common", ModEnvironment.UNIVERSAL, hash('c')),
-                "optional", candidate("optional", ModEnvironment.UNIVERSAL, hash('d')),
-                "servermod", candidate("servermod", ModEnvironment.UNIVERSAL, hash('e')));
-        AtomicInteger calls = new AtomicInteger();
-        RequiredManifest manifest = ServerManifest.build(new ServerConfig.Config(
-                        List.of("server", "client", "common", "optional", "servermod"), Map.of()), candidates::get, hashes -> {
-                    calls.incrementAndGet();
-                    assertEquals(Set.of(hash('c'), hash('d'), hash('e')), hashes);
-                    return Map.of(hash('c'), "client_and_server", hash('d'), "server_only_client_optional",
-                            hash('e'), "dedicated_server_only");
+    void explicitExclusionsAndUnknownsBuildProtocolOneManifest() throws Exception {
+        var server = item("server", ModEnvironment.SERVER);
+        var client = item("client", ModEnvironment.CLIENT);
+        var common = item("common", ModEnvironment.UNIVERSAL);
+        var optional = item("optional", ModEnvironment.UNIVERSAL);
+        var absent = item("absent", ModEnvironment.UNIVERSAL);
+        var future = item("future", ModEnvironment.UNIVERSAL);
+        String commonHash = Hashing.sha512(common.jar());
+        String optionalHash = Hashing.sha512(optional.jar());
+        String futureHash = Hashing.sha512(future.jar());
+        ServerManifest.BuildResult result = ServerManifest.build(List.of(server, client, common, optional, absent, future),
+                hashes -> {
+                    assertEquals(4, hashes.size());
+                    return Map.of(commonHash, "client_and_server", optionalHash, "server_only_client_optional",
+                            futureHash, "future_environment");
                 });
-        assertEquals(1, calls.get());
-        assertEquals(RequiredManifest.PROTOCOL, manifest.protocol());
-        assertEquals(List.of("common"), manifest.entries().stream().map(entry -> entry.modId()).toList());
-        assertEquals(hash('c'), manifest.entries().get(0).sha512());
-        assertEquals("1.2.3", manifest.entries().get(0).version());
+        assertEquals(RequiredManifest.PROTOCOL, result.manifest().protocol());
+        assertEquals(List.of("common", "absent", "future"),
+                result.manifest().entries().stream().map(entry -> entry.modId()).toList());
+        Map<String, ClientSyncDecision> decisions = result.classified().stream().collect(Collectors.toMap(
+                classified -> classified.discovered().candidate().modId(), ServerManifest.Classified::decision));
+        assertEquals(ClientSyncDecision.SYNC, decisions.get("common"));
+        assertEquals(ClientSyncDecision.SYNC_CONSERVATIVE, decisions.get("absent"));
+        assertEquals(ClientSyncDecision.SYNC_CONSERVATIVE, decisions.get("future"));
+        assertEquals(ClientSyncDecision.EXCLUDE, decisions.get("server"));
+        assertEquals(ClientSyncDecision.EXCLUDE, decisions.get("optional"));
     }
 
     @Test
-    void fabricOnlyCandidatesDoNotCallModrinth() throws Exception {
-        RequiredManifest manifest = ServerManifest.build(new ServerConfig.Config(List.of("server"), Map.of()),
-                id -> candidate(id, ModEnvironment.SERVER, hash('a')),
-                hashes -> { fail("No universal candidate; no HTTP lookup is needed"); return Map.of(); });
-        assertTrue(manifest.entries().isEmpty());
+    void fabricServerOnlySkipsHashingAndLookup() throws Exception {
+        var missing = new ServerDiscovery.Discovered(new ServerDiscovery.Candidate("server", "Server", "1",
+                ModEnvironment.SERVER, false, List.of(gameDir.resolve("missing.jar"))), gameDir.resolve("missing.jar"));
+        var result = ServerManifest.build(List.of(missing), hashes -> {
+            fail("No lookup for Fabric SERVER"); return Map.of();
+        });
+        assertTrue(result.manifest().entries().isEmpty());
+        assertNull(result.classified().get(0).jar());
     }
 
     @Test
-    void unknownNeedsExplicitOverride() throws Exception {
-        var candidate = candidate("private_mod", ModEnvironment.UNIVERSAL, hash('a'));
-        assertThrows(IOException.class, () -> ServerManifest.build(new ServerConfig.Config(List.of("private_mod"), Map.of()),
-                id -> candidate, hashes -> Map.of()));
-        RequiredManifest manifest = ServerManifest.build(new ServerConfig.Config(List.of("private_mod"),
-                        Map.of("private_mod", RequiredEnvironment.CLIENT_REQUIRED)), id -> candidate, hashes -> Map.of());
-        assertEquals(List.of("private_mod"), manifest.entries().stream().map(entry -> entry.modId()).toList());
-    }
-
-    @Test
-    void explicitClassificationsCannotBeOverridden() {
-        for (ModEnvironment environment : new ModEnvironment[]{ModEnvironment.SERVER, ModEnvironment.CLIENT}) {
-            assertThrows(IOException.class, () -> ServerManifest.build(new ServerConfig.Config(List.of("mod"),
-                            Map.of("mod", RequiredEnvironment.CLIENT_REQUIRED)),
-                    id -> candidate(id, environment, hash('a')), hashes -> Map.of()));
-        }
-        for (String modrinth : List.of("server_only", "client_only", "client_and_server")) {
-            assertThrows(IOException.class, () -> ServerManifest.build(new ServerConfig.Config(List.of("mod"),
-                            Map.of("mod", RequiredEnvironment.CLIENT_REQUIRED)),
-                    id -> candidate(id, ModEnvironment.UNIVERSAL, hash('a')),
-                    hashes -> Map.of(hash('a'), modrinth)), modrinth);
-        }
-    }
-
-    @Test
-    void batchFailureFailsWholeManifest() {
-        IOException error = assertThrows(IOException.class, () -> ServerManifest.build(
-                new ServerConfig.Config(List.of("mod"), Map.of()),
-                id -> candidate(id, ModEnvironment.UNIVERSAL, hash('a')),
+    void infrastructureFailureFailsWholeManifest() throws Exception {
+        var mod = item("mod", ModEnvironment.UNIVERSAL);
+        IOException error = assertThrows(IOException.class, () -> ServerManifest.build(List.of(mod),
                 hashes -> { throw new IOException("HTTP 503"); }));
         assertTrue(error.getMessage().contains("HTTP 503"));
+    }
+
+    @Test
+    void finalLimitAppliesAfterFiltering() throws Exception {
+        List<ServerDiscovery.Discovered> items = new ArrayList<>();
+        for (int i = 0; i < 129; i++) items.add(item("mod" + i, ModEnvironment.UNIVERSAL));
+        String excluded = Hashing.sha512(items.get(0).jar());
+        assertEquals(128, ServerManifest.build(items, hashes -> Map.of(excluded, "server_only"))
+                .manifest().entries().size());
+        IOException error = assertThrows(IOException.class, () -> ServerManifest.build(items, hashes -> Map.of()));
+        assertTrue(error.getMessage().contains("more client-sync entries than Protocol 1 supports"));
     }
 }

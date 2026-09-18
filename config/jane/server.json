@@ -1,4 +1,3 @@
 {
-  "requiredMods": [],
-  "environmentOverrides": {}
+  "mode": "AUTO_DISCOVER"
 }

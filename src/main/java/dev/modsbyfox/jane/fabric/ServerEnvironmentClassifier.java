@@ -1,16 +1,15 @@
 package dev.modsbyfox.jane.fabric;
 
-import dev.modsbyfox.jane.core.RequiredEnvironment;
+import dev.modsbyfox.jane.core.ClientSyncDecision;
 import java.util.Optional;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
 
 final class ServerEnvironmentClassifier {
     private ServerEnvironmentClassifier() { }
 
-    static Optional<RequiredEnvironment> fromFabric(ModEnvironment environment) {
+    static Optional<ClientSyncDecision> fromFabric(ModEnvironment environment) {
         return switch (environment) {
-            case SERVER -> Optional.of(RequiredEnvironment.SERVER_ONLY);
-            case CLIENT -> Optional.of(RequiredEnvironment.CLIENT_OPTIONAL);
+            case SERVER, CLIENT -> Optional.of(ClientSyncDecision.EXCLUDE);
             case UNIVERSAL -> Optional.empty();
         };
     }

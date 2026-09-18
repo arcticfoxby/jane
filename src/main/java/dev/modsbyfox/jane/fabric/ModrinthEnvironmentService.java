@@ -4,7 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.modsbyfox.jane.core.RequiredManifest;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,7 +13,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -22,6 +24,7 @@ import java.util.Set;
 final class ModrinthEnvironmentService {
     private static final URI ENDPOINT = URI.create("https://api.modrinth.com/v2/version_files");
     static final int MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+    static final int MAX_HASHES_PER_REQUEST = 100;
 
     record Response(int status, InputStream body) { }
     @FunctionalInterface interface Transport {
@@ -43,17 +46,26 @@ final class ModrinthEnvironmentService {
 
     Map<String, String> lookup(Set<String> hashes) throws IOException {
         if (hashes.isEmpty()) return Map.of();
-        if (hashes.size() > RequiredManifest.MAX_ENTRIES || hashes.stream().anyMatch(hash ->
-                hash == null || !hash.matches("[0-9a-f]{128}"))) {
+        if (hashes.stream().anyMatch(hash -> hash == null || !hash.matches("[0-9a-f]{128}"))) {
             throw new IOException("Invalid SHA-512 batch");
         }
+        List<String> ordered = new ArrayList<>(hashes);
+        Map<String, String> merged = new LinkedHashMap<>();
+        for (int start = 0; start < ordered.size(); start += MAX_HASHES_PER_REQUEST) {
+            Set<String> batch = new LinkedHashSet<>(ordered.subList(start, Math.min(start + MAX_HASHES_PER_REQUEST, ordered.size())));
+            merged.putAll(lookupBatch(batch));
+        }
+        return Map.copyOf(merged);
+    }
+
+    private Map<String, String> lookupBatch(Set<String> hashes) throws IOException {
         JsonObject body = new JsonObject();
         JsonArray hashArray = new JsonArray();
         hashes.forEach(hashArray::add);
         body.add("hashes", hashArray);
         body.addProperty("algorithm", "sha512");
         HttpRequest request = HttpRequest.newBuilder(ENDPOINT).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.0.3")
+                .header("User-Agent", "modsbyfox/Jane/1.0.3.1")
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8)).build();
