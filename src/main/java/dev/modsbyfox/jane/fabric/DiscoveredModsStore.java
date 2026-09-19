@@ -26,7 +26,7 @@ final class DiscoveredModsStore {
         }
         JsonObject json = new JsonObject();
         json.addProperty("schemaVersion", 2);
-        json.addProperty("janeVersion", "1.1.0-beta.1");
+        json.addProperty("janeVersion", "1.1.1-beta.1");
         JsonArray mods = new JsonArray();
         for (ServerManifest.Classified item : classified) {
             var candidate = item.discovered().candidate();
@@ -46,11 +46,12 @@ final class DiscoveredModsStore {
         }
         for (ServerDiscovery.Skipped item : skipped) {
             JsonObject mod = new JsonObject();
-            mod.addProperty("modId", (String) null);
-            mod.addProperty("displayName", (String) null);
-            mod.addProperty("version", (String) null);
+            var candidate = item.candidate();
+            mod.addProperty("modId", candidate == null ? null : candidate.modId());
+            mod.addProperty("displayName", candidate == null ? null : candidate.displayName());
+            mod.addProperty("version", candidate == null ? null : candidate.version());
             mod.addProperty("fileName", item.jar().getFileName().toString());
-            mod.addProperty("fabricEnvironment", (String) null);
+            mod.addProperty("fabricEnvironment", candidate == null ? null : candidate.fabricEnvironment().name());
             mod.addProperty("syncDecision", "SKIP");
             mod.addProperty("reason", item.reason());
             mods.add(mod);

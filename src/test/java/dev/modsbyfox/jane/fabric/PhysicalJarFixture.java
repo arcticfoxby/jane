@@ -12,8 +12,12 @@ final class PhysicalJarFixture {
     private PhysicalJarFixture() { }
 
     static Path mod(Path mods, String fileName, String id, String environment) throws IOException {
+        return mod(mods, fileName, id, "1.2.3", environment);
+    }
+
+    static Path mod(Path mods, String fileName, String id, String version, String environment) throws IOException {
         return jar(mods, fileName, "{\"schemaVersion\":1,\"id\":\"" + id
-                + "\",\"name\":\"Name " + id + "\",\"version\":\"1.2.3\",\"environment\":\""
+                + "\",\"name\":\"Name " + id + "\",\"version\":\"" + version + "\",\"environment\":\""
                 + environment + "\"}");
     }
 

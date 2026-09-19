@@ -54,7 +54,7 @@ final class FabricJarMetadata {
             if (reader.peek() != JsonToken.BEGIN_OBJECT) throw new IOException("Invalid Fabric metadata in " + jar.getFileName());
             reader.beginObject();
             Set<String> seen = new HashSet<>();
-            String schema = null, id = null, name = null, version = null, environment = "*";
+            String schema = "0", id = null, name = null, version = null, environment = "*", side = "universal";
             while (reader.hasNext()) {
                 String field = reader.nextName();
                 if (!seen.add(field)) throw new IOException("Duplicate Fabric metadata field in " + jar.getFileName());
@@ -64,22 +64,33 @@ final class FabricJarMetadata {
                     case "name" -> name = value(reader, JsonToken.STRING);
                     case "version" -> version = value(reader, JsonToken.STRING);
                     case "environment" -> environment = value(reader, JsonToken.STRING);
+                    case "side" -> side = value(reader, JsonToken.STRING);
                     default -> reader.skipValue();
                 }
             }
             reader.endObject();
-            if (reader.peek() != JsonToken.END_DOCUMENT || !"1".equals(schema)
+            if (reader.peek() != JsonToken.END_DOCUMENT || (!"0".equals(schema) && !"1".equals(schema))
                     || id == null || !ID.matcher(id).matches() || version == null || !validText(version, 64)) {
                 throw new IOException("Invalid Fabric identity in " + jar.getFileName());
             }
             if (name == null) name = id;
             if (!validText(name, 128)) throw new IOException("Invalid Fabric name in " + jar.getFileName());
-            ModEnvironment fabric = switch (environment) {
-                case "*" -> ModEnvironment.UNIVERSAL;
-                case "client" -> ModEnvironment.CLIENT;
-                case "server" -> ModEnvironment.SERVER;
-                default -> throw new IOException("Invalid Fabric environment in " + jar.getFileName());
-            };
+            ModEnvironment fabric;
+            if ("0".equals(schema)) {
+                fabric = switch (side) {
+                    case "universal" -> ModEnvironment.UNIVERSAL;
+                    case "client" -> ModEnvironment.CLIENT;
+                    case "server" -> ModEnvironment.SERVER;
+                    default -> throw new IOException("Invalid Fabric side in " + jar.getFileName());
+                };
+            } else {
+                fabric = switch (environment) {
+                    case "*" -> ModEnvironment.UNIVERSAL;
+                    case "client" -> ModEnvironment.CLIENT;
+                    case "server" -> ModEnvironment.SERVER;
+                    default -> throw new IOException("Invalid Fabric environment in " + jar.getFileName());
+                };
+            }
             return new ServerDiscovery.Candidate(id, name, version, fabric);
         } catch (RuntimeException exception) {
             throw new IOException("Invalid Fabric metadata in " + jar.getFileName(), exception);

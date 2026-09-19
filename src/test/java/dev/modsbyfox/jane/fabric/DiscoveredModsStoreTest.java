@@ -26,7 +26,7 @@ class DiscoveredModsStoreTest {
         assertFalse(content.contains(gameDir.toString()));
         JsonObject json = JsonParser.parseString(content).getAsJsonObject();
         assertEquals(2, json.get("schemaVersion").getAsInt());
-        assertEquals("1.1.0-beta.1", json.get("janeVersion").getAsString());
+        assertEquals("1.1.1-beta.1", json.get("janeVersion").getAsString());
         assertEquals(2, json.getAsJsonArray("mods").size());
         JsonObject mod = json.getAsJsonArray("mods").get(0).getAsJsonObject();
         assertEquals("example", mod.get("modId").getAsString());
@@ -41,6 +41,25 @@ class DiscoveredModsStoreTest {
         assertEquals("library.jar", skipped.get("fileName").getAsString());
         assertEquals("SKIP", skipped.get("syncDecision").getAsString());
         assertEquals("not_fabric_mod", skipped.get("reason").getAsString());
+    }
+
+    @Test void duplicateSkipRetainsCandidateMetadataInDiagnostic() throws Exception {
+        Path mods = gameDir.resolve("mods");
+        PhysicalJarFixture.mod(mods, "old.jar", "example", "1.0.0", "client");
+        PhysicalJarFixture.mod(mods, "new.jar", "example", "2.0.0", "client");
+        ServerDiscovery.Discovery discovery = ServerDiscovery.discover(gameDir, id -> java.util.Optional.empty());
+        DiscoveredModsStore.write(gameDir, ServerManifest.build(discovery.mods(), gameDir).classified(),
+                discovery.skipped());
+        JsonObject json = JsonParser.parseString(Files.readString(gameDir.resolve("config/jane/discovered-mods.json")))
+                .getAsJsonObject();
+        JsonObject skipped = json.getAsJsonArray("mods").get(1).getAsJsonObject();
+        assertEquals("example", skipped.get("modId").getAsString());
+        assertEquals("Name example", skipped.get("displayName").getAsString());
+        assertEquals("1.0.0", skipped.get("version").getAsString());
+        assertEquals("old.jar", skipped.get("fileName").getAsString());
+        assertEquals("CLIENT", skipped.get("fabricEnvironment").getAsString());
+        assertEquals("SKIP", skipped.get("syncDecision").getAsString());
+        assertEquals("duplicate_older_semver", skipped.get("reason").getAsString());
     }
 
     @Test void diagnosticIsWriteOnlyAndCannotChangePhysicalDiscovery() throws Exception {

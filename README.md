@@ -1,4 +1,4 @@
-# 简 (Jane) 1.1.0 Beta
+# 简 (Jane) 1.1.1 Beta
 
 Jane scans physical Fabric JARs directly in the dedicated server's `mods` directory. Fabric `server`-only JARs and Jane itself are excluded; every other valid top-level Fabric Mod JAR becomes part of the server-required physical client baseline. Nested JARs are never synchronized independently. Extra client mods absent from the server, such as Sodium, Iris, maps, HUD mods, and ReplayMod, remain allowed and are not removed.
 
@@ -30,7 +30,7 @@ On first dedicated-server start, Jane creates `<gameDir>/config/jane/server.json
 }
 ```
 
-A copy is in [`config/jane/server.json`](config/jane/server.json). Jane scans direct `.jar` files in this instance's `mods` directory and reads each root `fabric.mod.json` without extracting files. JARs without that metadata are skipped with a diagnostic; malformed or oversized Fabric metadata and duplicate physical Mod IDs fail startup closed. Fabric API is included when it exists as a non-server-only physical JAR. Minecraft, Java, and Fabric Loader are not invented as manifest files.
+A copy is in [`config/jane/server.json`](config/jane/server.json). Jane scans direct `.jar` files in this instance's `mods` directory and reads each root `fabric.mod.json` (schema 0 or 1) without extracting files. JARs without that metadata are skipped with a diagnostic; malformed or oversized Fabric metadata fails startup closed. When multiple physical top-level JARs declare the same Mod ID, Jane first follows Fabric Loader's selected active candidate. If no candidate is active in the dedicated-server environment, Jane may select a unique newest SemanticVersion. Ambiguous or non-comparable duplicates fail closed. Jane does not alter the duplicate files. Fabric API is included when it exists as a non-server-only physical JAR. Minecraft, Java, and Fabric Loader are not invented as manifest files.
 
 Fabric `server`-only mods and Jane are excluded before hashing. Universal (`*` or omitted environment) and `client` mods enter the required manifest with the size and SHA-512 of the exact physical JAR. Server startup does not query Modrinth: the server JAR determines what is required, while Modrinth is only a possible public source for that same file. After the player chooses to prepare files, the client first checks Modrinth by exact SHA-512, then offers the current server's exact JAR through ServerProvider if the public hash is absent. A Modrinth lookup error remains unresolved rather than being treated as a missing public hash.
 

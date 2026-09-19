@@ -48,7 +48,7 @@ final class ServerManifest {
         long sync = result.classified().stream().filter(item -> item.decision() == ClientSyncDecision.SYNC).count();
         LOGGER.log(System.Logger.Level.INFO, "Jane discovery summary: physicalFabricJars=" + discovery.mods().size()
                 + ", sync=" + sync + ", excluded=" + (result.classified().size() - sync)
-                + ", noMetadataSkipped=" + discovery.skipped().size()
+                + ", skippedPhysicalJars=" + discovery.skipped().size()
                 + ", manifestEntries=" + result.manifest().entries().size());
         Map<String, Path> files = new HashMap<>();
         for (Classified item : result.classified()) {
