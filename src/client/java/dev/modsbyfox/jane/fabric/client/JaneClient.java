@@ -9,6 +9,7 @@ import dev.modsbyfox.jane.core.RequiredManifest;
 import dev.modsbyfox.jane.core.PendingRecovery;
 import dev.modsbyfox.jane.fabric.JaneMod;
 import dev.modsbyfox.jane.fabric.ModOrigins;
+import dev.modsbyfox.jane.fabric.JaneLog;
 import io.netty.buffer.Unpooled;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -39,6 +40,7 @@ public final class JaneClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        LOGGER.info("{}startup protocol={}", JaneLog.clientStartup(), RequiredManifest.PROTOCOL);
         ClientLoginConnectionEvents.INIT.register((handler, client) -> {
             PENDING.begin(handler);
         });

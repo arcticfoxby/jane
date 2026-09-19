@@ -36,6 +36,7 @@ public final class JaneMod implements ModInitializer {
     public void onInitialize() {
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             if (!server.isDedicatedServer()) return;
+            LOGGER.info("{}startup protocol={}", JaneLog.server(), RequiredManifest.PROTOCOL);
             try {
                 ServerManifest.Prepared prepared = ServerManifest.prepare();
                 manifest = prepared.manifest();

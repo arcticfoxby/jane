@@ -17,10 +17,12 @@ import java.util.List;
 import java.util.Map;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** The physical non-server-only Fabric JAR set is the required client baseline. */
 final class ServerManifest {
-    private static final System.Logger LOGGER = System.getLogger("jane");
+    private static final Logger LOGGER = LoggerFactory.getLogger("jane");
     private static boolean legacyWarned;
 
     record JarData(long size, String sha512) { }
@@ -39,14 +41,13 @@ final class ServerManifest {
         ServerConfig.Config config = ServerConfig.read(gameDir, loader.getConfigDir());
         if (config.legacyFieldsPresent() && !legacyWarned) {
             legacyWarned = true;
-            LOGGER.log(System.Logger.Level.WARNING,
-                    "Jane ignores legacy requiredMods and environmentOverrides; AUTO_DISCOVER is active");
+            LOGGER.warn("{}ignores legacy requiredMods and environmentOverrides; AUTO_DISCOVER is active", JaneLog.server());
         }
         ServerDiscovery.Discovery discovery = ServerDiscovery.discover(gameDir);
         BuildResult result = build(discovery.mods(), gameDir);
         DiscoveredModsStore.write(gameDir, result.classified(), discovery.skipped());
         long sync = result.classified().stream().filter(item -> item.decision() == ClientSyncDecision.SYNC).count();
-        LOGGER.log(System.Logger.Level.INFO, "Jane discovery summary: physicalFabricJars=" + discovery.mods().size()
+        LOGGER.info(JaneLog.server() + "discovery summary: physicalFabricJars=" + discovery.mods().size()
                 + ", sync=" + sync + ", excluded=" + (result.classified().size() - sync)
                 + ", skippedPhysicalJars=" + discovery.skipped().size()
                 + ", manifestEntries=" + result.manifest().entries().size());
@@ -67,7 +68,7 @@ final class ServerManifest {
             if (candidate.fabricEnvironment() == ModEnvironment.SERVER || "jane".equals(candidate.modId())) {
                 String reason = "jane".equals(candidate.modId()) ? "jane_internal" : "fabric_server_only";
                 classified.add(new Classified(item, null, ClientSyncDecision.EXCLUDE, reason));
-                LOGGER.log(System.Logger.Level.INFO, "Jane discovery: " + candidate.modId() + " -> EXCLUDE (" + reason + ")");
+                LOGGER.info("{}discovery modId={} decision=EXCLUDE reason={}", JaneLog.server(), candidate.modId(), reason);
                 continue;
             }
             Path safe = PathSafety.existingJarInMods(gameDir, item.jar());
@@ -81,11 +82,11 @@ final class ServerManifest {
             if (required.size() > RequiredManifest.MAX_ENTRIES)
                 throw new IOException("Jane discovered more client-sync entries than Protocol 3 supports");
             classified.add(new Classified(item, jar, ClientSyncDecision.SYNC, "physical_client_target"));
-            LOGGER.log(System.Logger.Level.INFO, "Jane discovery: " + candidate.modId() + " -> SYNC (physical_client_target)");
+            LOGGER.info("{}discovery modId={} decision=SYNC reason=physical_client_target", JaneLog.server(), candidate.modId());
         }
         try {
             RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, required);
-            LOGGER.log(System.Logger.Level.INFO, "Jane physical discovery: " + classified.size() + " Fabric JARs, "
+            LOGGER.info(JaneLog.server() + "physical discovery: " + classified.size() + " Fabric JARs, "
                     + required.size() + " client-sync entries");
             return new BuildResult(manifest, List.copyOf(classified));
         } catch (IllegalArgumentException exception) {

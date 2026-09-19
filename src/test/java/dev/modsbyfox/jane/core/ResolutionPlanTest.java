@@ -45,6 +45,89 @@ class ResolutionPlanTest {
         assertFalse(plan.downloadQueue().stream().anyMatch(i -> i.comparison().required().modId().equals("mod2")));
     }
 
+    @Test void eightyTrustedFourServerOnlyResolveWithoutStartingDownloads() throws Exception {
+        List<Comparison.Result> comparisons = missing(84);
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
+                comparisons.stream().map(Comparison.Result::required).toList());
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons,
+                new ServerProviderOffer(25566, "a".repeat(64))));
+        assertTrue(session.beginResolution(84));
+        session.publishResolution(ResolutionPlan.resolve(comparisons, entry ->
+                Integer.parseInt(entry.modId().substring(3)) < 80
+                        ? Optional.of(source(entry)) : Optional.empty(), true, session::resolutionProgress));
+        assertEquals(80, session.snapshot().resolution().count(ResolutionPlan.Availability.TRUSTED_AVAILABLE));
+        assertEquals(4, session.snapshot().resolution().count(ResolutionPlan.Availability.SERVER_ONLY));
+        assertEquals(0, session.snapshot().resolution().count(ResolutionPlan.Availability.LOOKUP_FAILED));
+        assertEquals(0, session.snapshot().resolution().count(ResolutionPlan.Availability.UNRESOLVED));
+        assertFalse(session.snapshot().running());
+        assertFalse(session.snapshot().started());
+    }
+
+    @Test void availabilityDistinguishesLookupFailureFromMissingPublicHashAndRetryPreservesSuccesses() throws Exception {
+        List<Comparison.Result> comparisons = missing(3);
+        ResolutionPlan plan = ResolutionPlan.resolve(comparisons, entry -> {
+            if (entry.modId().equals("mod1")) throw new IOException("network unavailable");
+            return entry.modId().equals("mod2") ? Optional.empty() : Optional.of(source(entry));
+        }, true, count -> { });
+        assertEquals(List.of(ResolutionPlan.Availability.TRUSTED_AVAILABLE,
+                ResolutionPlan.Availability.LOOKUP_FAILED, ResolutionPlan.Availability.SERVER_ONLY),
+                plan.items().stream().map(ResolutionPlan.Item::availability).toList());
+        assertNull(plan.items().get(1).trustedSource());
+        AtomicInteger retried = new AtomicInteger();
+        ResolutionPlan refreshed = plan.retryLookupFailures(entry -> {
+            retried.incrementAndGet();
+            assertEquals("mod1", entry.modId());
+            return Optional.of(source(entry));
+        }, true);
+        assertEquals(1, retried.get());
+        assertSame(plan.items().get(0), refreshed.items().get(0));
+        assertSame(plan.items().get(2), refreshed.items().get(2));
+        assertEquals(2, refreshed.count(ResolutionPlan.Availability.TRUSTED_AVAILABLE));
+        assertEquals(1, refreshed.count(ResolutionPlan.Availability.SERVER_ONLY));
+        assertEquals(0, refreshed.count(ResolutionPlan.Availability.LOOKUP_FAILED));
+        assertEquals(ResolutionPlan.Availability.UNRESOLVED, ResolutionPlan.resolve(missing(1),
+                entry -> Optional.empty()).items().get(0).availability());
+    }
+
+    @Test void trustedItemsSupportBothRoutesButServerOnlyRequiresConfirmation() throws Exception {
+        List<Comparison.Result> comparisons = missing(2);
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
+                comparisons.stream().map(Comparison.Result::required).toList());
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons,
+                new ServerProviderOffer(25566, "a".repeat(64))));
+        session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> entry.modId().equals("mod0")
+                ? Optional.of(source(entry)) : Optional.empty(), true, count -> { }));
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED, ResolutionPlan.TransferRoute.TRUSTED_SOURCE));
+        assertFalse(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED, ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        session.finishTransfer(true, null);
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED, ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        session.update("mod0", JaneSyncSession.RuntimeState.READY, comparisons.get(0).required().fileSize());
+        session.finishTransfer(false, null);
+        assertEquals(source(comparisons.get(0).required()), session.snapshot().items().get(0).item().trustedSource());
+        assertFalse(session.startTransfer(ResolutionPlan.TransferGroup.SERVER_ONLY, ResolutionPlan.TransferRoute.TRUSTED_SOURCE));
+        assertFalse(session.startTransfer(ResolutionPlan.TransferGroup.SERVER_ONLY, ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        assertFalse(session.startDownloads(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
+        assertTrue(session.startServerOnlyConfirmed());
+    }
+
+    @Test void failedTransferReentersWaitingWithoutChangingReadyItems() throws Exception {
+        List<Comparison.Result> comparisons = missing(2);
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
+                comparisons.stream().map(Comparison.Result::required).toList());
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons,
+                new ServerProviderOffer(25566, "a".repeat(64))));
+        session.publishResolution(ResolutionPlan.resolve(comparisons, entry -> Optional.of(source(entry))));
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED, ResolutionPlan.TransferRoute.TRUSTED_SOURCE));
+        session.update("mod0", JaneSyncSession.RuntimeState.READY, comparisons.get(0).required().fileSize());
+        session.update("mod1", JaneSyncSession.RuntimeState.FAILED, 4);
+        session.finishTransfer(false, null);
+        assertEquals(1, session.snapshot().failedCount());
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED, ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        assertEquals(JaneSyncSession.RuntimeState.READY, session.snapshot().items().get(0).state());
+        assertEquals(JaneSyncSession.RuntimeState.WAITING, session.snapshot().items().get(1).state());
+        assertEquals(1, session.snapshot().queue(ResolutionPlan.TransferGroup.TRUSTED).size());
+    }
+
     @Test
     void lookupFailureDoesNotStopLaterFiles() throws Exception {
         ResolutionPlan plan = ResolutionPlan.resolve(missing(3), entry -> {

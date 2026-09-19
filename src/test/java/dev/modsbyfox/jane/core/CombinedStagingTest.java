@@ -43,11 +43,11 @@ class CombinedStagingTest {
         for (int i = 0; i < publicCount; i++) ready(session, workspace, entries.get(i), data.get(i), plan.items().get(i));
         assertNull(workspace.prepareIfComplete(game, session));
         session.finish(null);
-        assertEquals(SyncNotice.Kind.SERVER_REMAINING, SyncNotice.select(session.snapshot(), false));
+        assertEquals(SyncNotice.Kind.SERVER_ONLY_REMAINING, SyncNotice.select(session.snapshot(), false));
         assertFalse(Files.exists(game.resolve("jane/pending/" + workspace.syncId())));
         assertEquals(publicCount, session.snapshot().readyCount());
         if (serverCount > 0) {
-            assertTrue(session.startDownloads(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
+            assertTrue(session.startServerOnlyConfirmed());
             for (int i = publicCount; i < entries.size(); i++) ready(session, workspace, entries.get(i), data.get(i), plan.items().get(i));
         }
         UpdatePlan update = workspace.prepareIfComplete(game, session);

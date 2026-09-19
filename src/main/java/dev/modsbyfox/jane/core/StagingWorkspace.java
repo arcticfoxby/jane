@@ -45,11 +45,16 @@ public final class StagingWorkspace {
     public synchronized UpdatePlan prepareIfComplete(Path gameDir, JaneSyncSession session,
                                                      java.util.function.BooleanSupplier cancelled) throws IOException {
         JaneSyncSession.Snapshot snapshot = session.snapshot();
-        if (snapshot.resolution() == null || snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED) != 0
-                || snapshot.items().stream().anyMatch(item -> item.item().source() != null
-                && item.state() != JaneSyncSession.RuntimeState.READY)) return null;
+        if (snapshot.resolution() == null
+                || snapshot.resolution().count(ResolutionPlan.Availability.LOOKUP_FAILED) != 0
+                || snapshot.resolution().count(ResolutionPlan.Availability.UNRESOLVED) != 0
+                || snapshot.items().stream().anyMatch(item ->
+                (item.item().availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                        || item.item().availability() == ResolutionPlan.Availability.SERVER_ONLY)
+                        && item.state() != JaneSyncSession.RuntimeState.READY)) return null;
         List<ResolutionPlan.Item> downloads = snapshot.resolution().items().stream()
-                .filter(item -> item.source() != null).toList();
+                .filter(item -> item.availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                        || item.availability() == ResolutionPlan.Availability.SERVER_ONLY).toList();
         if (operations.size() != downloads.size()) throw new IOException("Incomplete staging operation list");
         if (!PathSafety.janeDirectory(gameDir, "staging", syncId).equals(directory))
             throw new IOException("Staging workspace changed");

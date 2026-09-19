@@ -185,7 +185,7 @@ class ServerProviderTransferTest {
         JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("127.0.0.1", manifest, comparisons,
                 new ServerProviderOffer(25566, "a".repeat(64))));
         session.publishResolution(ResolutionPlan.resolve(comparisons, target -> java.util.Optional.empty(), true, count -> { }));
-        assertTrue(session.startDownloads(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
+        assertTrue(session.startServerOnlyConfirmed());
         try (java.net.ServerSocket fake = new java.net.ServerSocket(0)) {
             Thread server = new Thread(() -> {
                 try (Socket socket = fake.accept()) {

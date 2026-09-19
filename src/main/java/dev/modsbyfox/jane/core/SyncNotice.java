@@ -1,28 +1,23 @@
 package dev.modsbyfox.jane.core;
 
-/** Selects the final message from source classification and preparation state. */
+/** Selects the message from availability and verified transfer state. */
 public final class SyncNotice {
-    public enum Kind { CONFIRM, FAILED_FILES, MANUAL_REMAINING, FAILED_AND_MANUAL,
-        SERVER_REMAINING, SERVER_FAILED, INCOMPLETE }
-
+    public enum Kind { SOURCE_SELECTION, LOOKUP_FAILED, TRUSTED_PARTIAL, TRUSTED_FAILED,
+        SERVER_ONLY_REMAINING, SERVER_ONLY_FAILED, CONFIRM, INCOMPLETE }
     private SyncNotice() { }
 
     public static Kind select(JaneSyncSession.Snapshot snapshot, boolean pendingReady) {
         if (pendingReady) return Kind.CONFIRM;
-        long server = snapshot.resolution() == null ? 0
-                : snapshot.resolution().count(ResolutionPlan.Classification.SERVER_DOWNLOADABLE);
-        if (server > 0 && snapshot.providerReady(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE)) {
-            if (snapshot.items().stream().anyMatch(i -> i.item().classification() == ResolutionPlan.Classification.SERVER_DOWNLOADABLE
-                    && i.state() == JaneSyncSession.RuntimeState.FAILED)) return Kind.SERVER_FAILED;
-            if (snapshot.items().stream().anyMatch(i -> i.item().classification() == ResolutionPlan.Classification.SERVER_DOWNLOADABLE
-                    && i.state() == JaneSyncSession.RuntimeState.WAITING)) return Kind.SERVER_REMAINING;
+        ResolutionPlan plan = snapshot.resolution();
+        if (plan == null) return Kind.INCOMPLETE;
+        if (snapshot.failedCount(ResolutionPlan.Availability.TRUSTED_AVAILABLE) > 0) return Kind.TRUSTED_FAILED;
+        if (!snapshot.groupReady(ResolutionPlan.TransferGroup.TRUSTED)) {
+            return snapshot.readyCount(ResolutionPlan.Availability.TRUSTED_AVAILABLE) > 0
+                    ? Kind.TRUSTED_PARTIAL : Kind.SOURCE_SELECTION;
         }
-        long failed = snapshot.failedCount();
-        long unresolved = snapshot.resolution() == null ? 0
-                : snapshot.resolution().count(ResolutionPlan.Classification.UNRESOLVED);
-        if (failed > 0 && unresolved > 0) return Kind.FAILED_AND_MANUAL;
-        if (failed > 0) return Kind.FAILED_FILES;
-        if (unresolved > 0) return Kind.MANUAL_REMAINING;
+        if (snapshot.failedCount(ResolutionPlan.Availability.SERVER_ONLY) > 0) return Kind.SERVER_ONLY_FAILED;
+        if (!snapshot.groupReady(ResolutionPlan.TransferGroup.SERVER_ONLY)) return Kind.SERVER_ONLY_REMAINING;
+        if (plan.count(ResolutionPlan.Availability.LOOKUP_FAILED) > 0) return Kind.LOOKUP_FAILED;
         return Kind.INCOMPLETE;
     }
 }

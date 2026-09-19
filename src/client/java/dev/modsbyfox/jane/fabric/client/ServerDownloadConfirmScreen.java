@@ -32,8 +32,8 @@ final class ServerDownloadConfirmScreen extends Screen {
     }
 
     private List<ResolutionPlan.Item> items() {
-        ResolutionPlan plan = session.snapshot().resolution();
-        return plan == null ? List.of() : plan.queue(ResolutionPlan.Classification.SERVER_DOWNLOADABLE);
+        return session.snapshot().resolution() == null ? List.of()
+                : session.snapshot().queue(ResolutionPlan.TransferGroup.SERVER_ONLY);
     }
 
     private String fit(String value, int max) {

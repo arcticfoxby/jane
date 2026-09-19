@@ -8,9 +8,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.OptionalInt;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class ServerConfig {
-    private static final System.Logger LOGGER = System.getLogger("jane");
+    private static final Logger LOGGER = LoggerFactory.getLogger("jane");
     private static final String LEGACY_DEFAULT = "{\n  \"mode\": \"AUTO_DISCOVER\",\n  \"serverProvider\": {\n    \"enabled\": false,\n    \"bindPort\": 25566,\n    \"advertisedPort\": 25566\n  }\n}\n";
     private static final String DEFAULT = "{\n  \"mode\": \"AUTO_DISCOVER\",\n  \"serverProvider\": {\n    \"mode\": \"AUTO\"\n  }\n}\n";
     enum ProviderMode { AUTO, MINECRAFT, SEPARATE_PORT, DISABLED }
@@ -96,10 +98,10 @@ final class ServerConfig {
                     int advertised = port(settings, "advertisedPort");
                     if (settings.get("enabled").getAsBoolean()) provider = Provider.separate(bind, advertised);
                     else if (LEGACY_DEFAULT.equals(content)) {
-                        LOGGER.log(System.Logger.Level.INFO, "Jane migrated legacy default ServerProvider configuration to AUTO.");
+                        LOGGER.info("{}migrated legacy default ServerProvider configuration to AUTO", JaneLog.server());
                         provider = Provider.of(ProviderMode.AUTO);
                     } else {
-                        LOGGER.log(System.Logger.Level.WARNING, "Jane retained legacy disabled ServerProvider configuration; select AUTO explicitly to enable Minecraft transport.");
+                        LOGGER.warn("{}retained legacy disabled ServerProvider configuration; select AUTO explicitly to enable Minecraft transport", JaneLog.server());
                         provider = Provider.of(ProviderMode.DISABLED);
                     }
                 }

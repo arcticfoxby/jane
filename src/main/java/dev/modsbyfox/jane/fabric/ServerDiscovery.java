@@ -17,10 +17,12 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.SemanticVersion;
 import net.fabricmc.loader.api.VersionParsingException;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Scans only physical JARs directly in this instance's mods directory. */
 final class ServerDiscovery {
-    private static final System.Logger LOGGER = System.getLogger("jane");
+    private static final Logger LOGGER = LoggerFactory.getLogger("jane");
 
     record Candidate(String modId, String displayName, String version, ModEnvironment fabricEnvironment) { }
     record Discovered(Candidate candidate, Path jar) { }
@@ -62,8 +64,7 @@ final class ServerDiscovery {
             Optional<Candidate> metadata = FabricJarMetadata.read(safe);
             if (metadata.isEmpty()) {
                 skipped.add(new Skipped(safe, null, "not_fabric_mod"));
-                LOGGER.log(System.Logger.Level.WARNING, "Jane skipped JAR without root fabric.mod.json: "
-                        + safe.getFileName());
+                LOGGER.warn("{}skipped JAR without root fabric.mod.json: {}", JaneLog.server(), safe.getFileName());
                 continue;
             }
             Candidate candidate = metadata.orElseThrow();
@@ -87,8 +88,7 @@ final class ServerDiscovery {
     private static Discovered resolveCandidates(String id, List<Discovered> candidates, Path root,
                                                  SelectedJarResolver selectedJar, List<Skipped> skipped)
             throws IOException {
-        LOGGER.log(System.Logger.Level.INFO, "Jane duplicate resolution: " + id + " has "
-                + candidates.size() + " physical candidates");
+        LOGGER.info("{}duplicate mod id={} candidates={}", JaneLog.server(), id, candidates.size());
         String details = candidates.stream().map(item -> item.jar().getFileName() + " version "
                 + item.candidate().version()).reduce((a, b) -> a + ", " + b).orElse("");
         Optional<Path> selected;
@@ -113,8 +113,8 @@ final class ServerDiscovery {
                             + "': Fabric Loader selected origin " + origin.getFileName()
                             + " is not a physical candidate; candidates: " + details));
             skippedReason = "duplicate_not_selected_by_loader";
-            LOGGER.log(System.Logger.Level.INFO, "Jane duplicate resolution: " + id
-                    + " -> selected by Fabric Loader: " + winner.jar().getFileName());
+            LOGGER.info("{}duplicate mod id={} selected={} reason=FABRIC_LOADER_SELECTED",
+                    JaneLog.server(), id, winner.jar().getFileName());
         } else {
             SemanticVersion highest = null;
             winner = null;
@@ -140,15 +140,13 @@ final class ServerDiscovery {
             if (tied) throw new IOException("Cannot safely resolve duplicate physical Mod ID '" + id
                     + "': highest SemanticVersion is not unique; candidates: " + details);
             skippedReason = "duplicate_older_semver";
-            LOGGER.log(System.Logger.Level.INFO, "Jane duplicate resolution: " + id
-                    + " -> no active server candidate; selected newest SemanticVersion " + highest
-                    + ": " + winner.jar().getFileName());
+            LOGGER.info("{}duplicate mod id={} selected={} version={} reason=LATEST_SEMVER",
+                    JaneLog.server(), id, winner.jar().getFileName(), highest);
         }
         for (Discovered item : candidates) {
             if (item == winner) continue;
             skipped.add(new Skipped(item.jar(), item.candidate(), skippedReason));
-            LOGGER.log(System.Logger.Level.INFO, "Jane duplicate resolution: " + id
-                    + " -> skipped: " + item.jar().getFileName());
+            LOGGER.info("{}duplicate mod id={} skipped={}", JaneLog.server(), id, item.jar().getFileName());
         }
         return winner;
     }

@@ -28,7 +28,7 @@ final class ModrinthService {
     Optional<ResolutionPlan.Source> find(ManifestEntry target) throws IOException, InterruptedException {
         URI uri = URI.create("https://api.modrinth.com/v2/version_file/" + target.sha512() + "?algorithm=sha512");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.1.1-beta.1")
+                .header("User-Agent", "modsbyfox/Jane/1.1.2-beta.1")
                 .header("Accept", "application/json").GET().build();
         HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
@@ -36,11 +36,11 @@ final class ModrinthService {
             if (response.statusCode() != 200) throw new IOException("Modrinth lookup returned HTTP " + response.statusCode());
             byte[] bytes = readBounded(body, MAX_JSON);
             JsonObject version = JsonParser.parseString(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
-            if (!contains(version.getAsJsonArray("game_versions"), "1.20.1") || !contains(version.getAsJsonArray("loaders"), "fabric")) {
-                return Optional.empty();
-            }
+            if (!contains(version.getAsJsonArray("game_versions"), "1.20.1")
+                    || !contains(version.getAsJsonArray("loaders"), "fabric"))
+                throw new IOException("Modrinth returned incompatible metadata for exact hash");
             JsonArray files = version.getAsJsonArray("files");
-            if (files == null) return Optional.empty();
+            if (files == null) throw new IOException("Modrinth response omitted exact-hash files");
             for (JsonElement element : files) {
                 JsonObject file = element.getAsJsonObject();
                 JsonObject hashes = file.getAsJsonObject("hashes");
@@ -56,7 +56,7 @@ final class ModrinthService {
                 }
                 return Optional.of(new ResolutionPlan.Source(name, download, size));
             }
-            return Optional.empty();
+            throw new IOException("Modrinth response did not contain the requested exact file");
         } catch (RuntimeException exception) {
             throw new IOException("Invalid Modrinth response", exception);
         }
@@ -66,7 +66,7 @@ final class ModrinthService {
                   BooleanSupplier cancelled, LongConsumer progress) throws IOException, InterruptedException {
         ModrinthDownload.download(source, target, destination, cancelled, progress, uri -> {
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(5))
-                    .header("User-Agent", "modsbyfox/Jane/1.1.1-beta.1").GET().build();
+                    .header("User-Agent", "modsbyfox/Jane/1.1.2-beta.1").GET().build();
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             return new ModrinthDownload.Response(response.statusCode(), response.headers().allValues("Location"), response.body());
         });

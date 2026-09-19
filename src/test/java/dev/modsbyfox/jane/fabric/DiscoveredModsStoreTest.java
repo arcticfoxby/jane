@@ -26,7 +26,7 @@ class DiscoveredModsStoreTest {
         assertFalse(content.contains(gameDir.toString()));
         JsonObject json = JsonParser.parseString(content).getAsJsonObject();
         assertEquals(2, json.get("schemaVersion").getAsInt());
-        assertEquals("1.1.1-beta.1", json.get("janeVersion").getAsString());
+        assertEquals("1.1.2-beta.1", json.get("janeVersion").getAsString());
         assertEquals(2, json.getAsJsonArray("mods").size());
         JsonObject mod = json.getAsJsonArray("mods").get(0).getAsJsonObject();
         assertEquals("example", mod.get("modId").getAsString());

@@ -6,9 +6,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/** Classification of the server's required files, independent of download progress. */
+/** Exact-file availability, independent of the route later used to transfer the bytes. */
 public record ResolutionPlan(List<Item> items) {
-    public enum Classification { ALREADY_PRESENT, MODRINTH_DOWNLOADABLE, SERVER_DOWNLOADABLE, UNRESOLVED }
+    public enum Availability { ALREADY_PRESENT, TRUSTED_AVAILABLE, SERVER_ONLY, LOOKUP_FAILED, UNRESOLVED }
+    public enum TransferGroup { TRUSTED, SERVER_ONLY }
+    public enum TransferRoute { TRUSTED_SOURCE, CURRENT_SERVER }
+    // Compatibility for existing callers; new work uses Availability and TransferGroup.
+    @Deprecated public enum Classification { ALREADY_PRESENT, MODRINTH_DOWNLOADABLE, SERVER_DOWNLOADABLE, UNRESOLVED }
     public enum Provider { MODRINTH, SERVER }
     public record Source(Provider provider, String name, URI uri, long size) {
         public Source(String name, URI uri, long size) { this(Provider.MODRINTH, name, uri, size); }
@@ -28,19 +32,26 @@ public record ResolutionPlan(List<Item> items) {
         return new Source(Provider.SERVER, PathSafety.safeJarName("jane-" + entry.modId() + "-"
                 + entry.sha512().substring(0, 12) + ".jar"), null, entry.fileSize());
     }
-    public record Item(Comparison.Result comparison, Classification classification, Source source) {
+    public record Item(Comparison.Result comparison, Availability availability, Source trustedSource) {
         public Item {
             java.util.Objects.requireNonNull(comparison, "comparison");
-            java.util.Objects.requireNonNull(classification, "classification");
-            if ((classification == Classification.MODRINTH_DOWNLOADABLE || classification == Classification.SERVER_DOWNLOADABLE)
-                    != (source != null)) {
-                throw new IllegalArgumentException("Downloadable items require a source");
-            }
-            if (source != null && source.size() != comparison.required().fileSize()) {
-                throw new IllegalArgumentException("Source size differs from required file");
-            }
-            if (source != null && ((classification == Classification.MODRINTH_DOWNLOADABLE) !=
-                    (source.provider() == Provider.MODRINTH))) throw new IllegalArgumentException("Source provider mismatch");
+            java.util.Objects.requireNonNull(availability, "availability");
+            if ((availability == Availability.TRUSTED_AVAILABLE) != (trustedSource != null))
+                throw new IllegalArgumentException("Only trusted availability may carry a public source");
+            if (trustedSource != null && (trustedSource.provider() != Provider.MODRINTH
+                    || trustedSource.size() != comparison.required().fileSize()))
+                throw new IllegalArgumentException("Trusted source differs from required file");
+        }
+        @Deprecated public Classification classification() {
+            return switch (availability) {
+                case ALREADY_PRESENT -> Classification.ALREADY_PRESENT;
+                case TRUSTED_AVAILABLE -> Classification.MODRINTH_DOWNLOADABLE;
+                case SERVER_ONLY -> Classification.SERVER_DOWNLOADABLE;
+                case LOOKUP_FAILED, UNRESOLVED -> Classification.UNRESOLVED;
+            };
+        }
+        @Deprecated public Source source() {
+            return availability == Availability.SERVER_ONLY ? serverSource(comparison.required()) : trustedSource;
         }
     }
     @FunctionalInterface public interface Resolver {
@@ -48,9 +59,7 @@ public record ResolutionPlan(List<Item> items) {
     }
     @FunctionalInterface public interface Progress { void processed(int count); }
 
-    public ResolutionPlan {
-        items = List.copyOf(items);
-    }
+    public ResolutionPlan { items = List.copyOf(items); }
 
     public static ResolutionPlan resolve(List<Comparison.Result> comparisons, Resolver resolver) throws InterruptedException {
         return resolve(comparisons, resolver, false, count -> { });
@@ -61,40 +70,49 @@ public record ResolutionPlan(List<Item> items) {
         List<Item> items = new ArrayList<>(comparisons.size());
         for (Comparison.Result comparison : comparisons) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-            if (comparison.status() == Comparison.Status.OK) {
-                items.add(new Item(comparison, Classification.ALREADY_PRESENT, null));
-                progress.processed(items.size());
-                continue;
-            }
-            try {
-                Optional<Source> source = resolver.find(comparison.required());
-                items.add(source.map(value -> new Item(comparison, Classification.MODRINTH_DOWNLOADABLE, value))
-                        .orElseGet(() -> serverAvailable
-                                ? new Item(comparison, Classification.SERVER_DOWNLOADABLE, serverSource(comparison.required()))
-                                : new Item(comparison, Classification.UNRESOLVED, null)));
-            } catch (IOException exception) {
-                // A lookup failure belongs to this file, not to the whole sync session.
-                items.add(new Item(comparison, Classification.UNRESOLVED, null));
-            }
+            items.add(resolveOne(comparison, resolver, serverAvailable));
             progress.processed(items.size());
         }
         return new ResolutionPlan(items);
     }
 
-    public List<Item> downloadQueue() {
-        return queue(Classification.MODRINTH_DOWNLOADABLE);
+    public ResolutionPlan retryLookupFailures(Resolver resolver, boolean serverAvailable) throws InterruptedException {
+        List<Item> refreshed = new ArrayList<>(items.size());
+        for (Item item : items) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            refreshed.add(item.availability() == Availability.LOOKUP_FAILED
+                    ? resolveOne(item.comparison(), resolver, serverAvailable) : item);
+        }
+        return new ResolutionPlan(refreshed);
     }
 
-    public List<Item> queue(Classification classification) {
+    private static Item resolveOne(Comparison.Result comparison, Resolver resolver, boolean serverAvailable)
+            throws InterruptedException {
+        if (comparison.status() == Comparison.Status.OK)
+            return new Item(comparison, Availability.ALREADY_PRESENT, null);
+        try {
+            Optional<Source> source = resolver.find(comparison.required());
+            return source.map(value -> new Item(comparison, Availability.TRUSTED_AVAILABLE, value))
+                    .orElseGet(() -> new Item(comparison,
+                            serverAvailable ? Availability.SERVER_ONLY : Availability.UNRESOLVED, null));
+        } catch (IOException exception) {
+            return new Item(comparison, Availability.LOOKUP_FAILED, null);
+        }
+    }
+
+    public List<Item> queue(Availability availability) {
+        return items.stream().filter(item -> item.availability() == availability).toList();
+    }
+    public long count(Availability availability) { return queue(availability).size(); }
+    public long size(Availability availability) {
+        return queue(availability).stream().mapToLong(item -> item.comparison().required().fileSize()).sum();
+    }
+    @Deprecated public List<Item> downloadQueue() { return queue(Availability.TRUSTED_AVAILABLE); }
+    @Deprecated public List<Item> queue(Classification classification) {
         return items.stream().filter(item -> item.classification() == classification).toList();
     }
-
-    public long count(Classification classification) {
-        return items.stream().filter(item -> item.classification() == classification).count();
-    }
-
-    public long size(Classification classification) {
-        return items.stream().filter(item -> item.classification() == classification)
-                .mapToLong(item -> item.comparison().required().fileSize()).sum();
+    @Deprecated public long count(Classification classification) { return queue(classification).size(); }
+    @Deprecated public long size(Classification classification) {
+        return queue(classification).stream().mapToLong(item -> item.comparison().required().fileSize()).sum();
     }
 }

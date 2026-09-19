@@ -19,9 +19,10 @@ final class SyncDetailsScreen extends Screen {
     private boolean serverOpen = true;
     private boolean presentOpen;
     private boolean unresolvedOpen = true;
+    private boolean lookupOpen = true;
     private int scroll;
     private boolean draggingBar;
-    private record Row(ResolutionPlan.Classification group, JaneSyncSession.ItemState item, int height) { }
+    private record Row(ResolutionPlan.Availability group, JaneSyncSession.ItemState item, int height) { }
 
     SyncDetailsScreen(Screen parent, JaneSyncSession session) {
         super(Component.translatable("jane.details.title"));
@@ -39,21 +40,24 @@ final class SyncDetailsScreen extends Screen {
     private List<Row> rows(JaneSyncSession.Snapshot snapshot) {
         List<Row> rows = new ArrayList<>();
         if (snapshot.resolution() == null) return rows;
-        addGroup(rows, snapshot, ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE, downloadsOpen);
-        addGroup(rows, snapshot, ResolutionPlan.Classification.SERVER_DOWNLOADABLE, serverOpen);
-        addGroup(rows, snapshot, ResolutionPlan.Classification.ALREADY_PRESENT, presentOpen);
-        addGroup(rows, snapshot, ResolutionPlan.Classification.UNRESOLVED, unresolvedOpen);
+        addGroup(rows, snapshot, ResolutionPlan.Availability.TRUSTED_AVAILABLE, downloadsOpen);
+        addGroup(rows, snapshot, ResolutionPlan.Availability.SERVER_ONLY, serverOpen);
+        addGroup(rows, snapshot, ResolutionPlan.Availability.ALREADY_PRESENT, presentOpen);
+        addGroup(rows, snapshot, ResolutionPlan.Availability.LOOKUP_FAILED, lookupOpen);
+        addGroup(rows, snapshot, ResolutionPlan.Availability.UNRESOLVED, unresolvedOpen);
         return rows;
     }
 
     private static void addGroup(List<Row> rows, JaneSyncSession.Snapshot snapshot,
-                                 ResolutionPlan.Classification group, boolean open) {
+                                 ResolutionPlan.Availability group, boolean open) {
         rows.add(new Row(group, null, HEADER_HEIGHT));
         if (!open) return;
         for (JaneSyncSession.ItemState item : snapshot.items()) {
-            if (item.item().classification() == group) {
-                rows.add(new Row(group, item, group == ResolutionPlan.Classification.UNRESOLVED ? 52
-                        : item.item().source() != null ? 38 : 29));
+            if (item.item().availability() == group) {
+                rows.add(new Row(group, item, group == ResolutionPlan.Availability.UNRESOLVED
+                        || group == ResolutionPlan.Availability.LOOKUP_FAILED ? 52
+                        : group == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                        || group == ResolutionPlan.Availability.SERVER_ONLY ? 38 : 29));
             }
         }
     }
@@ -138,18 +142,20 @@ final class SyncDetailsScreen extends Screen {
         }
     }
 
-    private void drawHeader(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot, ResolutionPlan.Classification group,
+    private void drawHeader(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot, ResolutionPlan.Availability group,
                             int left, int right, int y, int mouseX, int mouseY) {
         boolean open = switch (group) {
-            case MODRINTH_DOWNLOADABLE -> downloadsOpen;
-            case SERVER_DOWNLOADABLE -> serverOpen;
+            case TRUSTED_AVAILABLE -> downloadsOpen;
+            case SERVER_ONLY -> serverOpen;
             case ALREADY_PRESENT -> presentOpen;
+            case LOOKUP_FAILED -> lookupOpen;
             case UNRESOLVED -> unresolvedOpen;
         };
         String key = switch (group) {
-            case MODRINTH_DOWNLOADABLE -> "jane.details.downloadable";
-            case SERVER_DOWNLOADABLE -> "jane.details.server_downloadable";
+            case TRUSTED_AVAILABLE -> "jane.sync.trusted_available";
+            case SERVER_ONLY -> "jane.sync.server_only";
             case ALREADY_PRESENT -> "jane.details.present";
+            case LOOKUP_FAILED -> "jane.sync.lookup_failed";
             case UNRESOLVED -> "jane.details.unresolved";
         };
         int shade = mouseX >= left && mouseX < right && mouseY >= y && mouseY < y + HEADER_HEIGHT ? 0xFF555555 : 0xFF333333;
@@ -162,26 +168,35 @@ final class SyncDetailsScreen extends Screen {
     private void drawItem(GuiGraphics graphics, JaneSyncSession.ItemState state, int left, int right, int y) {
         var comparison = state.item().comparison();
         var target = comparison.required();
-        graphics.fill(left, y, right, y + (state.item().classification() == ResolutionPlan.Classification.UNRESOLVED ? 50
-                : state.item().source() != null ? 36 : 27), 0x88000000);
+        ResolutionPlan.Availability availability = state.item().availability();
+        graphics.fill(left, y, right, y + (availability == ResolutionPlan.Availability.UNRESOLVED
+                || availability == ResolutionPlan.Availability.LOOKUP_FAILED ? 50
+                : availability == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                || availability == ResolutionPlan.Availability.SERVER_ONLY ? 36 : 27), 0x88000000);
         int textLeft = left + 6;
         int textRight = right - 6;
         graphics.drawString(font, fit(target.displayName(), textRight - textLeft), textLeft, y + 3, 0xFFFFFF);
-        if (state.item().classification() == ResolutionPlan.Classification.ALREADY_PRESENT) {
+        if (availability == ResolutionPlan.Availability.ALREADY_PRESENT) {
             graphics.drawString(font, fit(target.version(), textRight - textLeft - 90), textLeft, y + 16, 0xCCCCCC);
             right(graphics, Component.translatable("jane.details.matched"), textRight, y + 16, 0xAAFFAA);
-        } else if (state.item().source() != null) {
+        } else if (availability == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                || availability == ResolutionPlan.Availability.SERVER_ONLY) {
             String reason = Component.translatable("jane.status." + comparison.status().name().toLowerCase(java.util.Locale.ROOT)).getString();
             String versions = comparison.local() == null ? target.version() : comparison.local().version() + " → " + target.version();
             graphics.drawString(font, fit(reason + "  " + versions, textRight - textLeft), textLeft, y + 15, 0xCCCCCC);
             String stateText = runtime(state);
-            String sourceName = state.item().classification() == ResolutionPlan.Classification.SERVER_DOWNLOADABLE
-                    ? Component.translatable("jane.details.current_server").getString() : "Modrinth ✓";
+            String sourceKey = availability == ResolutionPlan.Availability.SERVER_ONLY
+                    ? "jane.details.current_server"
+                    : state.completedVia() == ResolutionPlan.TransferRoute.CURRENT_SERVER
+                    ? "jane.details.trusted_via_server" : "jane.details.trusted_source";
+            String sourceName = Component.translatable(sourceKey).getString();
             graphics.drawString(font, fit(sourceName + "  " + SyncScreen.mib(target.fileSize()) + " MiB", textRight - textLeft - 90),
                     textLeft, y + 27, 0xAAFFAA);
             right(graphics, Component.literal(stateText), textRight, y + 27, 0xFFCC77);
         } else {
-            graphics.drawString(font, fit(Component.translatable("jane.details.unknown_source").getString() + "  "
+            String sourceKey = availability == ResolutionPlan.Availability.LOOKUP_FAILED
+                    ? "jane.sync.lookup_failed" : "jane.details.unknown_source";
+            graphics.drawString(font, fit(Component.translatable(sourceKey).getString() + "  "
                     + Component.translatable("jane.details.server_version", target.version()).getString(), textRight - textLeft),
                     textLeft, y + 16, 0xFFAA55);
             String hash = target.sha512();
@@ -236,9 +251,10 @@ final class SyncDetailsScreen extends Screen {
         for (Row row : rows) {
             if (row.item() == null && mouseY >= y && mouseY < y + row.height()) {
                 switch (row.group()) {
-                    case MODRINTH_DOWNLOADABLE -> downloadsOpen = !downloadsOpen;
-                    case SERVER_DOWNLOADABLE -> serverOpen = !serverOpen;
+                    case TRUSTED_AVAILABLE -> downloadsOpen = !downloadsOpen;
+                    case SERVER_ONLY -> serverOpen = !serverOpen;
                     case ALREADY_PRESENT -> presentOpen = !presentOpen;
+                    case LOOKUP_FAILED -> lookupOpen = !lookupOpen;
                     case UNRESOLVED -> unresolvedOpen = !unresolvedOpen;
                 }
                 clampScroll(rows(session.snapshot()));

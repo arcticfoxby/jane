@@ -25,6 +25,32 @@ class SyncNoticeTest {
         return session;
     }
 
+    @Test void resolvedTrustedItemsWaitForExplicitRouteSelection() throws Exception {
+        ManifestEntry entry = new ManifestEntry("example", "Example", "1", 10, HASH);
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, List.of(entry));
+        var comparisons = Comparison.compare(manifest, Map.of(), path -> HASH);
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons));
+        session.publishResolution(ResolutionPlan.resolve(comparisons, target -> Optional.of(
+                new ResolutionPlan.Source("example.jar", URI.create("https://cdn.modrinth.com/example.jar"), 10))));
+        assertEquals(SyncNotice.Kind.SOURCE_SELECTION, SyncNotice.select(session.snapshot(), false));
+        assertFalse(session.snapshot().running());
+        assertFalse(session.snapshot().started());
+    }
+
+    @Test void failedLookupHasDistinctNoticeAndBlocksInstall() throws Exception {
+        ManifestEntry entry = new ManifestEntry("example", "Example", "1", 10, HASH);
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, List.of(entry));
+        var comparisons = Comparison.compare(manifest, Map.of(), path -> HASH);
+        JaneSyncSession session = new JaneSyncSession(new PendingSyncContext("example.org", manifest, comparisons,
+                new ServerProviderOffer(25566, "a".repeat(64))));
+        session.publishResolution(ResolutionPlan.resolve(comparisons, target -> { throw new java.io.IOException("timeout"); },
+                true, ignored -> { }));
+        assertEquals(ResolutionPlan.Availability.LOOKUP_FAILED,
+                session.snapshot().resolution().items().get(0).availability());
+        assertEquals(SyncNotice.Kind.LOOKUP_FAILED, SyncNotice.select(session.snapshot(), false));
+        assertFalse(session.snapshot().canInstall());
+    }
+
     @Test
     void failedDownloadAloneIsNotCalledUnresolved() throws Exception {
         JaneSyncSession session = session(false);
@@ -33,7 +59,7 @@ class SyncNoticeTest {
         assertEquals(1, session.snapshot().failedCount());
         assertEquals(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE,
                 session.snapshot().items().get(0).item().classification());
-        assertEquals(SyncNotice.Kind.FAILED_FILES, SyncNotice.select(session.snapshot(), false));
+        assertEquals(SyncNotice.Kind.TRUSTED_FAILED, SyncNotice.select(session.snapshot(), false));
     }
 
     @Test
@@ -41,12 +67,12 @@ class SyncNoticeTest {
         JaneSyncSession session = session(true);
         session.update("aircraft", JaneSyncSession.RuntimeState.READY, 10);
         session.finish(null);
-        assertEquals(SyncNotice.Kind.MANUAL_REMAINING, SyncNotice.select(session.snapshot(), false));
+        assertEquals(SyncNotice.Kind.INCOMPLETE, SyncNotice.select(session.snapshot(), false));
 
         JaneSyncSession mixed = session(true);
         mixed.update("aircraft", JaneSyncSession.RuntimeState.FAILED, 0);
         mixed.finish(null);
-        assertEquals(SyncNotice.Kind.FAILED_AND_MANUAL, SyncNotice.select(mixed.snapshot(), false));
+        assertEquals(SyncNotice.Kind.TRUSTED_FAILED, SyncNotice.select(mixed.snapshot(), false));
     }
 
     @Test
@@ -81,6 +107,6 @@ class SyncNoticeTest {
         assertEquals(1, snapshot.failedCount(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE));
         assertFalse(snapshot.providerReady(ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE));
         assertFalse(session.startDownloads(ResolutionPlan.Classification.SERVER_DOWNLOADABLE));
-        assertEquals(SyncNotice.Kind.FAILED_FILES, SyncNotice.select(snapshot, false));
+        assertEquals(SyncNotice.Kind.TRUSTED_FAILED, SyncNotice.select(snapshot, false));
     }
 }
