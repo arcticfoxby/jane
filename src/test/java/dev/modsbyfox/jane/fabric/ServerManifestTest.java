@@ -6,82 +6,83 @@ import dev.modsbyfox.jane.core.ClientSyncDecision;
 import dev.modsbyfox.jane.core.Hashing;
 import dev.modsbyfox.jane.core.RequiredManifest;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
-import net.fabricmc.loader.api.metadata.ModEnvironment;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ServerManifestTest {
     @TempDir Path gameDir;
 
-    private ServerDiscovery.Discovered item(String id, ModEnvironment environment) throws IOException {
-        Path jar = Files.write(gameDir.resolve(id + ".jar"), id.getBytes(StandardCharsets.UTF_8));
-        return new ServerDiscovery.Discovered(new ServerDiscovery.Candidate(id, "Name " + id, "1.2.3",
-                environment, false, List.of(jar)), jar);
-    }
+    private Path mods() { return gameDir.resolve("mods"); }
 
-    @Test
-    void explicitExclusionsAndUnknownsBuildProtocolOneManifest() throws Exception {
-        var server = item("server", ModEnvironment.SERVER);
-        var client = item("client", ModEnvironment.CLIENT);
-        var common = item("common", ModEnvironment.UNIVERSAL);
-        var optional = item("optional", ModEnvironment.UNIVERSAL);
-        var absent = item("absent", ModEnvironment.UNIVERSAL);
-        var future = item("future", ModEnvironment.UNIVERSAL);
-        String commonHash = Hashing.sha512(common.jar());
-        String optionalHash = Hashing.sha512(optional.jar());
-        String futureHash = Hashing.sha512(future.jar());
-        ServerManifest.BuildResult result = ServerManifest.build(List.of(server, client, common, optional, absent, future),
-                hashes -> {
-                    assertEquals(4, hashes.size());
-                    return Map.of(commonHash, "client_and_server", optionalHash, "server_only_client_optional",
-                            futureHash, "future_environment");
-                });
-        assertEquals(RequiredManifest.PROTOCOL, result.manifest().protocol());
-        assertEquals(List.of("common", "absent", "future"),
-                result.manifest().entries().stream().map(entry -> entry.modId()).toList());
+    @Test void universalClientAndFabricApiEnterPhysicalProtocolThreeManifest() throws Exception {
+        Path universal = PhysicalJarFixture.mod(mods(), "universal.jar", "universal", "*");
+        Path client = PhysicalJarFixture.mod(mods(), "client.jar", "client", "client");
+        Path fabricApi = PhysicalJarFixture.mod(mods(), "fabric-api.jar", "fabric-api", "*");
+        PhysicalJarFixture.mod(mods(), "server.jar", "server", "server");
+        PhysicalJarFixture.mod(mods(), "jane.jar", "jane", "*");
+
+        ServerManifest.BuildResult result = ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir);
+        assertEquals(3, result.manifest().protocol());
+        assertEquals(List.of("client", "fabric-api", "universal"), result.manifest().entries().stream()
+                .map(entry -> entry.modId()).toList());
+        for (Path jar : List.of(universal, client, fabricApi)) {
+            String id = jar.getFileName().toString().replace(".jar", "");
+            var entry = result.manifest().entries().stream().filter(item -> item.modId().equals(id)).findFirst().orElseThrow();
+            assertEquals(Files.size(jar), entry.fileSize());
+            assertEquals(Hashing.sha512(jar), entry.sha512());
+        }
         Map<String, ClientSyncDecision> decisions = result.classified().stream().collect(Collectors.toMap(
-                classified -> classified.discovered().candidate().modId(), ServerManifest.Classified::decision));
-        assertEquals(ClientSyncDecision.SYNC, decisions.get("common"));
-        assertEquals(ClientSyncDecision.SYNC_CONSERVATIVE, decisions.get("absent"));
-        assertEquals(ClientSyncDecision.SYNC_CONSERVATIVE, decisions.get("future"));
+                item -> item.discovered().candidate().modId(), ServerManifest.Classified::decision));
         assertEquals(ClientSyncDecision.EXCLUDE, decisions.get("server"));
-        assertEquals(ClientSyncDecision.EXCLUDE, decisions.get("optional"));
+        assertEquals(ClientSyncDecision.EXCLUDE, decisions.get("jane"));
+        assertEquals(ClientSyncDecision.SYNC, decisions.get("client"));
     }
 
-    @Test
-    void fabricServerOnlySkipsHashingAndLookup() throws Exception {
-        var missing = new ServerDiscovery.Discovered(new ServerDiscovery.Candidate("server", "Server", "1",
-                ModEnvironment.SERVER, false, List.of(gameDir.resolve("missing.jar"))), gameDir.resolve("missing.jar"));
-        var result = ServerManifest.build(List.of(missing), hashes -> {
-            fail("No lookup for Fabric SERVER"); return Map.of();
-        });
+    @Test void serverOnlyAndJaneAreExcludedBeforeHashing() throws Exception {
+        Path server = PhysicalJarFixture.mod(mods(), "server.jar", "server", "server");
+        Path jane = PhysicalJarFixture.mod(mods(), "jane.jar", "jane", "*");
+        List<ServerDiscovery.Discovered> discovered = ServerDiscovery.discover(gameDir).mods();
+        Files.delete(server);
+        Files.delete(jane);
+        ServerManifest.BuildResult result = ServerManifest.build(discovered, gameDir);
         assertTrue(result.manifest().entries().isEmpty());
         assertNull(result.classified().get(0).jar());
+        assertNull(result.classified().get(1).jar());
+        assertEquals(Set.of("fabric_server_only", "jane_internal"), result.classified().stream()
+                .map(ServerManifest.Classified::reason).collect(Collectors.toSet()));
     }
 
-    @Test
-    void infrastructureFailureFailsWholeManifest() throws Exception {
-        var mod = item("mod", ModEnvironment.UNIVERSAL);
-        IOException error = assertThrows(IOException.class, () -> ServerManifest.build(List.of(mod),
-                hashes -> { throw new IOException("HTTP 503"); }));
-        assertTrue(error.getMessage().contains("HTTP 503"));
+    @Test void physicalClientDependenciesRemainRequiredWithoutLoaderOrDependencyGraph() throws Exception {
+        List<String> ids = List.of("accessories", "cloth-config", "ad_astra", "resourcefulconfig",
+                "carpet-tis-addition", "carpet", "shape-shifter-curse", "satin", "tacztweaks",
+                "fabric-language-kotlin", "yet-another-config-lib");
+        for (int index = 0; index < ids.size(); index++) {
+            String id = ids.get(index);
+            PhysicalJarFixture.mod(mods(), id + ".jar", id, index % 2 == 0 ? "client" : "*");
+        }
+        ServerManifest.BuildResult result = ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir);
+        assertEquals(ids.size(), result.manifest().entries().size());
+        assertEquals(Set.copyOf(ids), result.manifest().entries().stream().map(entry -> entry.modId())
+                .collect(Collectors.toSet()));
+        assertTrue(result.classified().stream().allMatch(item -> item.decision() == ClientSyncDecision.SYNC));
     }
 
-    @Test
-    void finalLimitAppliesAfterFiltering() throws Exception {
-        List<ServerDiscovery.Discovered> items = new ArrayList<>();
-        for (int i = 0; i < 129; i++) items.add(item("mod" + i, ModEnvironment.UNIVERSAL));
-        String excluded = Hashing.sha512(items.get(0).jar());
-        assertEquals(128, ServerManifest.build(items, hashes -> Map.of(excluded, "server_only"))
-                .manifest().entries().size());
-        IOException error = assertThrows(IOException.class, () -> ServerManifest.build(items, hashes -> Map.of()));
+    @Test void manifestLimitStillAppliesAfterPhysicalExclusions() throws Exception {
+        for (int index = 0; index < RequiredManifest.MAX_ENTRIES; index++)
+            PhysicalJarFixture.mod(mods(), "mod" + index + ".jar", "mod" + index, "*");
+        PhysicalJarFixture.mod(mods(), "server.jar", "server", "server");
+        PhysicalJarFixture.mod(mods(), "jane.jar", "jane", "*");
+        assertEquals(RequiredManifest.MAX_ENTRIES,
+                ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir).manifest().entries().size());
+        PhysicalJarFixture.mod(mods(), "extra.jar", "extra", "client");
+        IOException error = assertThrows(IOException.class,
+                () -> ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir));
         assertTrue(error.getMessage().contains("more client-sync entries than Protocol 3 supports"));
     }
 }

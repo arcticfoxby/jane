@@ -15,7 +15,8 @@ import java.util.List;
 final class DiscoveredModsStore {
     private DiscoveredModsStore() { }
 
-    static void write(Path gameDir, List<ServerManifest.Classified> classified) throws IOException {
+    static void write(Path gameDir, List<ServerManifest.Classified> classified,
+                      List<ServerDiscovery.Skipped> skipped) throws IOException {
         Path root = gameDir.toRealPath();
         Path config = childDirectory(root, "config");
         Path jane = childDirectory(config, "jane");
@@ -24,8 +25,8 @@ final class DiscoveredModsStore {
             throw new IOException("Jane discovery diagnostic target is unsafe");
         }
         JsonObject json = new JsonObject();
-        json.addProperty("schemaVersion", 1);
-        json.addProperty("janeVersion", "1.0.5");
+        json.addProperty("schemaVersion", 2);
+        json.addProperty("janeVersion", "1.1.0-beta.1");
         JsonArray mods = new JsonArray();
         for (ServerManifest.Classified item : classified) {
             var candidate = item.discovered().candidate();
@@ -40,9 +41,18 @@ final class DiscoveredModsStore {
             if (item.jar() != null) {
                 mod.addProperty("fileSize", item.jar().size());
                 mod.addProperty("sha512", item.jar().sha512());
-                if (item.modrinthEnvironment() != null) mod.addProperty("modrinthEnvironment", item.modrinthEnvironment());
-                mod.addProperty("modrinthExactMatch", item.modrinthEnvironment() != null);
             }
+            mods.add(mod);
+        }
+        for (ServerDiscovery.Skipped item : skipped) {
+            JsonObject mod = new JsonObject();
+            mod.addProperty("modId", (String) null);
+            mod.addProperty("displayName", (String) null);
+            mod.addProperty("version", (String) null);
+            mod.addProperty("fileName", item.jar().getFileName().toString());
+            mod.addProperty("fabricEnvironment", (String) null);
+            mod.addProperty("syncDecision", "SKIP");
+            mod.addProperty("reason", item.reason());
             mods.add(mod);
         }
         json.add("mods", mods);

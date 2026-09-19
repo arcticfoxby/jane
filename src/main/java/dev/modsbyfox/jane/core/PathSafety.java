@@ -20,12 +20,22 @@ public final class PathSafety {
     }
 
     public static Path existingJarInMods(Path gameDir, Path jar) throws IOException {
-        Path mods = gameDir.resolve("mods").toRealPath();
-        if (!mods.getParent().equals(gameDir.toRealPath()) || Files.isSymbolicLink(gameDir.resolve("mods"))) {
+        Path modsPath = gameDir.resolve("mods");
+        if (Files.isSymbolicLink(modsPath)) {
             throw new IOException("mods directory escaped current instance");
         }
+        Path mods = modsPath.toRealPath();
+        if (!mods.getParent().equals(gameDir.toRealPath())) {
+            throw new IOException("mods directory escaped current instance");
+        }
+        Path candidate = jar.toAbsolutePath().normalize();
+        Path lexicalMods = modsPath.toAbsolutePath().normalize();
+        if ((!candidate.getParent().equals(lexicalMods) && !candidate.getParent().equals(mods))
+                || Files.isSymbolicLink(candidate)) {
+            throw new IOException("Mod origin is not a direct JAR in this instance's mods directory");
+        }
         Path real = jar.toRealPath();
-        if (Files.isSymbolicLink(jar) || !Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)
+        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)
                 || !real.getParent().equals(mods) || !real.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar")) {
             throw new IOException("Mod origin is not a direct JAR in this instance's mods directory");
         }
