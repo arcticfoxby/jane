@@ -9,6 +9,7 @@ import dev.modsbyfox.jane.core.ResolutionPlan;
 import dev.modsbyfox.jane.core.StagedFileVerifier;
 import dev.modsbyfox.jane.core.StagingWorkspace;
 import dev.modsbyfox.jane.core.ServerProviderClient;
+import dev.modsbyfox.jane.core.ServerProviderTransport;
 import dev.modsbyfox.jane.core.UpdatePlan;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -102,7 +103,10 @@ final class StagingService {
                 if (provider == ResolutionPlan.Classification.MODRINTH_DOWNLOADABLE) {
                     modrinth.download(item.source(), target, part, cancelled, progress);
                 } else {
-                    ServerProviderClient.download(session.context().serverAddress(), session.context().provider(),
+                    if (session.context().provider().transport() == ServerProviderTransport.MINECRAFT)
+                        MinecraftProviderClient.download(session.context().serverAddress(), session.context().provider(),
+                                target, part, cancelled, progress);
+                    else ServerProviderClient.download(session.context().serverAddress(), session.context().provider(),
                             target, part, cancelled, progress);
                 }
                 LOGGER.info("Jane download complete; verifying {}", modId);

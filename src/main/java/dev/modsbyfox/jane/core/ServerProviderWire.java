@@ -11,6 +11,7 @@ public final class ServerProviderWire {
             BAD_REQUEST = 4, SERVER_ERROR = 5;
     private static final int MAGIC = 0x4a414e45;
     private static final int VERSION = 1;
+    public static final int REQUEST_BYTES = 8 + 64 + 128;
     public record Request(String token, String sha512) { }
 
     private ServerProviderWire() { }

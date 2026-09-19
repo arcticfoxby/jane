@@ -3,6 +3,8 @@ package dev.modsbyfox.jane.core;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,10 +40,26 @@ public final class ServerProviderClient {
         cancelMonitor.start();
         try (socket) {
             if (cancelled.getAsBoolean()) throw new IOException("Sync cancelled");
-            socket.connect(ServerIdentity.providerEndpoint(capturedAddress, offer.port()), 12_000);
+            if (offer.transport() != ServerProviderTransport.SEPARATE_PORT)
+                throw new IOException("Incorrect Provider transport");
+            socket.connect(ServerIdentity.providerEndpoint(capturedAddress, offer.advertisedPort().orElseThrow()), 12_000);
             socket.setSoTimeout(readTimeoutMillis);
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            DataInputStream in = new DataInputStream(socket.getInputStream());
+            transfer(socket.getInputStream(), socket.getOutputStream(), offer, entry, part, cancelled, progress);
+        } catch (IOException | RuntimeException exception) {
+            Files.deleteIfExists(part);
+            throw exception;
+        } finally {
+            finished.set(true);
+            cancelMonitor.interrupt();
+        }
+    }
+
+    /** Shared bounded response reader; the transport establishes the socket before calling this. */
+    public static void transfer(InputStream input, OutputStream output, ServerProviderOffer offer, ManifestEntry entry,
+                                Path part, BooleanSupplier cancelled, LongConsumer progress) throws IOException {
+        DataOutputStream out = new DataOutputStream(output);
+        DataInputStream in = new DataInputStream(input);
+        try {
             ServerProviderWire.writeRequest(out, offer.token(), entry.sha512());
             int status = in.readUnsignedByte();
             if (status != ServerProviderWire.OK) throw new IOException("ServerProvider " + switch (status) {
@@ -71,9 +89,6 @@ public final class ServerProviderClient {
         } catch (IOException | RuntimeException exception) {
             Files.deleteIfExists(part);
             throw exception;
-        } finally {
-            finished.set(true);
-            cancelMonitor.interrupt();
         }
     }
 }

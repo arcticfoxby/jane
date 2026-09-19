@@ -22,7 +22,7 @@
   "jane.sync.download_server": "Download from server",
   "jane.sync.server_remaining": "%s public-source files are ready; %s mods have no public source and need download from this server.",
   "jane.sync.server_preparing": "Downloading from server %s / %s · %s%%",
-  "jane.sync.server_failed": "%s server files failed to download or verify. Reconnect or check the local log.",
+  "jane.sync.server_failed": "%s server files failed to download or verify. Retry or contact the server administrator.",
   "jane.sync.manual": "Manual review needed",
   "jane.sync.size_count": "%s files · about %s MiB",
   "jane.sync.preparing": "Preparing %s / %s · %s%%",

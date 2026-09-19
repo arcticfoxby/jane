@@ -65,7 +65,7 @@ final class ModrinthEnvironmentService {
         body.add("hashes", hashArray);
         body.addProperty("algorithm", "sha512");
         HttpRequest request = HttpRequest.newBuilder(ENDPOINT).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.0.4.1")
+                .header("User-Agent", "modsbyfox/Jane/1.0.5")
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8)).build();

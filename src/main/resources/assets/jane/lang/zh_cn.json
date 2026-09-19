@@ -22,7 +22,7 @@
   "jane.sync.download_server": "从服务端下载",
   "jane.sync.server_remaining": "%s 个公共来源文件已准备；仍有 %s 个无公共来源 Mod，需要从服务端下载。",
   "jane.sync.server_preparing": "正在从服务端下载 %s / %s · %s%%",
-  "jane.sync.server_failed": "%s 个服务端文件下载或校验失败，请重新连接或查看本地日志。",
+  "jane.sync.server_failed": "%s 个服务端文件下载或校验失败。请重试或联系服务器管理员。",
   "jane.sync.manual": "需要人工确认",
   "jane.sync.size_count": "%s 个 · 约 %s MiB",
   "jane.sync.preparing": "正在准备 %s / %s · %s%%",

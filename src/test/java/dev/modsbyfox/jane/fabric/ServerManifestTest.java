@@ -82,6 +82,6 @@ class ServerManifestTest {
         assertEquals(128, ServerManifest.build(items, hashes -> Map.of(excluded, "server_only"))
                 .manifest().entries().size());
         IOException error = assertThrows(IOException.class, () -> ServerManifest.build(items, hashes -> Map.of()));
-        assertTrue(error.getMessage().contains("more client-sync entries than Protocol 2 supports"));
+        assertTrue(error.getMessage().contains("more client-sync entries than Protocol 3 supports"));
     }
 }

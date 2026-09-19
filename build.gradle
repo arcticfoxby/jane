@@ -24,7 +24,11 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation 'com.google.code.gson:gson:2.10'
+    testImplementation sourceSets.client.output
 }
+
+sourceSets.test.compileClasspath += sourceSets.client.compileClasspath
+sourceSets.test.runtimeClasspath += sourceSets.client.runtimeClasspath
 
 processResources {
     inputs.property 'version', project.version

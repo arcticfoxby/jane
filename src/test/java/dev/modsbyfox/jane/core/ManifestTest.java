@@ -34,12 +34,12 @@ class ManifestTest {
         ByteBuffer.wrap(unsupported).putInt(0, 1);
         assertThrows(ManifestCodec.UnsupportedProtocolException.class, () -> ManifestCodec.decode(unsupported));
         byte[] many = new byte[8];
-        ByteBuffer.wrap(many).putInt(2).putInt(129);
+        ByteBuffer.wrap(many).putInt(RequiredManifest.PROTOCOL).putInt(129);
         assertThrows(IOException.class, () -> ManifestCodec.decode(many));
         byte[] oversized = new byte[RequiredManifest.MAX_PAYLOAD + 1];
         assertThrows(IOException.class, () -> ManifestCodec.decode(oversized));
         byte[] badString = new byte[12];
-        ByteBuffer.wrap(badString).putInt(2).putInt(1).putInt(999999);
+        ByteBuffer.wrap(badString).putInt(RequiredManifest.PROTOCOL).putInt(1).putInt(999999);
         assertThrows(IOException.class, () -> ManifestCodec.decode(badString));
         assertThrows(IllegalArgumentException.class, () -> new ManifestEntry("../bad", "Bad", "1", 1, A));
         assertThrows(IllegalArgumentException.class, () -> new ManifestEntry("bad", "Bad", "1", 1, "x".repeat(128)));
@@ -47,11 +47,13 @@ class ManifestTest {
     }
 
     @Test
-    void protocolTwoOfferIsBoundedAndValidated() throws Exception {
+    void protocolThreeOfferIsBoundedAndValidated() throws Exception {
         RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
                 List.of(new ManifestEntry("create", "Create", "1", 10, A)));
         var enabled = new ManifestCodec.LoginOffer(manifest, new ServerProviderOffer(41477, "a".repeat(64)));
         assertEquals(enabled, ManifestCodec.decodeOffer(ManifestCodec.encode(enabled)));
+        var minecraft = new ManifestCodec.LoginOffer(manifest, ServerProviderOffer.minecraft("b".repeat(64)));
+        assertEquals(minecraft, ManifestCodec.decodeOffer(ManifestCodec.encode(minecraft)));
         assertNull(ManifestCodec.decodeOffer(ManifestCodec.encode(manifest)).provider());
         assertThrows(IllegalArgumentException.class, () -> new ServerProviderOffer(0, "a".repeat(64)));
         assertThrows(IllegalArgumentException.class, () -> new ServerProviderOffer(65536, "a".repeat(64)));
@@ -60,17 +62,24 @@ class ManifestTest {
         byte[] trailing = java.util.Arrays.copyOf(ManifestCodec.encode(enabled), ManifestCodec.encode(enabled).length + 1);
         assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(trailing));
         byte[] old = ManifestCodec.encode(manifest);
-        ByteBuffer.wrap(old).putInt(1);
+        ByteBuffer.wrap(old).putInt(2);
         assertThrows(ManifestCodec.UnsupportedProtocolException.class, () -> ManifestCodec.decodeOffer(old));
         byte[] badLength = ManifestCodec.encode(enabled);
-        ByteBuffer.wrap(badLength).putInt(badLength.length - 68, 65);
+        ByteBuffer.wrap(badLength).putInt(badLength.length - 72, 65);
         assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(badLength));
         byte[] badToken = ManifestCodec.encode(enabled);
-        badToken[badToken.length - 1] = 'g';
+        badToken[badToken.length - 5] = 'g';
         assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(badToken));
         byte[] badPort = ManifestCodec.encode(enabled);
-        ByteBuffer.wrap(badPort).putInt(badPort.length - 72, 0);
+        ByteBuffer.wrap(badPort).putInt(badPort.length - 4, 0);
         assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(badPort));
+        byte[] unknownTransport = ManifestCodec.encode(enabled);
+        unknownTransport[unknownTransport.length - 73] = 3;
+        assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(unknownTransport));
+        byte[] missingPort = java.util.Arrays.copyOf(ManifestCodec.encode(enabled), ManifestCodec.encode(enabled).length - 4);
+        assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(missingPort));
+        byte[] minecraftWithPort = java.util.Arrays.copyOf(ManifestCodec.encode(minecraft), ManifestCodec.encode(minecraft).length + 4);
+        assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(minecraftWithPort));
         byte[] single = ManifestCodec.encode(manifest);
         var duplicate = new java.io.ByteArrayOutputStream();
         var duplicateOut = new java.io.DataOutputStream(duplicate);

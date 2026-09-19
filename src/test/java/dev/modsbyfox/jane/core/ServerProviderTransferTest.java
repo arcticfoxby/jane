@@ -209,4 +209,26 @@ class ServerProviderTransferTest {
             server.join(3000);
         }
     }
+
+    @Test void largeFileStreamsThroughSharedProviderCore() throws Exception {
+        Path mods = Files.createDirectory(game.resolve("mods"));
+        Path jar = mods.resolve("large-fixture.jar");
+        byte[] block = new byte[64 * 1024];
+        new java.util.Random(42).nextBytes(block);
+        try (var output = Files.newOutputStream(jar)) {
+            for (int index = 0; index < 256; index++) output.write(block);
+        }
+        ManifestEntry entry = new ManifestEntry("large_fixture", "Large Fixture", "1", Files.size(jar), Hashing.sha512(jar));
+        try (ServerProviderService service = new ServerProviderService(game,
+                Map.of(entry.sha512(), new ServerProviderService.File(entry, jar)), 0, Clock.systemUTC())) {
+            String token = service.issue(new RequiredManifest(RequiredManifest.PROTOCOL, List.of(entry)));
+            Path part = game.resolve("large-fixture.jar.part");
+            java.util.concurrent.atomic.AtomicLong progress = new java.util.concurrent.atomic.AtomicLong();
+            ServerProviderClient.download("127.0.0.1", new ServerProviderOffer(service.port(), token), entry,
+                    part, () -> false, progress::set);
+            assertEquals(entry.fileSize(), progress.get());
+            assertEquals(entry.fileSize(), Files.size(part));
+            assertEquals(entry.sha512(), Hashing.sha512(part));
+        }
+    }
 }

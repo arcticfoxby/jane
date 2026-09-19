@@ -9,6 +9,7 @@
     "main": ["dev.modsbyfox.jane.fabric.JaneMod"],
     "client": ["dev.modsbyfox.jane.fabric.client.JaneClient"]
   },
+  "mixins": ["jane.mixins.json"],
   "depends": {
     "fabricloader": ">=0.16.14",
     "fabric-api": "*",

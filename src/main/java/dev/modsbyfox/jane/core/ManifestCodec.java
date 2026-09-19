@@ -33,8 +33,10 @@ public final class ManifestCodec {
         }
         out.writeBoolean(offer.provider() != null);
         if (offer.provider() != null) {
-            out.writeInt(offer.provider().port());
+            out.writeByte(offer.provider().transport() == ServerProviderTransport.MINECRAFT ? 1 : 2);
             writeString(out, offer.provider().token());
+            if (offer.provider().transport() == ServerProviderTransport.SEPARATE_PORT)
+                out.writeInt(offer.provider().advertisedPort().orElseThrow());
         }
         if (bytes.size() > RequiredManifest.MAX_PAYLOAD) throw new IOException("Manifest too large");
         return bytes.toByteArray();
@@ -66,7 +68,14 @@ public final class ManifestCodec {
             int flag = in.readUnsignedByte();
             if (flag != 0 && flag != 1) throw new IOException("Invalid provider flag");
             boolean available = flag == 1;
-            ServerProviderOffer provider = available ? new ServerProviderOffer(in.readInt(), readString(in, 64)) : null;
+            ServerProviderOffer provider = null;
+            if (available) {
+                int transport = in.readUnsignedByte();
+                if (transport != 1 && transport != 2) throw new IOException("Unknown ServerProvider transport");
+                String token = readString(in, 64);
+                provider = transport == 1 ? ServerProviderOffer.minecraft(token)
+                        : ServerProviderOffer.separatePort(in.readInt(), token);
+            }
             if (in.available() != 0) throw new IOException("Trailing manifest bytes");
             return new LoginOffer(new RequiredManifest(protocol, entries), provider);
         } catch (IllegalArgumentException exception) {

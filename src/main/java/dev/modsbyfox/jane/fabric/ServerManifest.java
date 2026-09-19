@@ -109,7 +109,7 @@ final class ServerManifest {
                     throw new IOException("Invalid discovered manifest entry: " + item.discovered().candidate().modId(), exception);
                 }
                 if (required.size() > RequiredManifest.MAX_ENTRIES) {
-                    throw new IOException("Jane discovered more client-sync entries than Protocol 2 supports");
+                    throw new IOException("Jane discovered more client-sync entries than Protocol 3 supports");
                 }
             }
         }

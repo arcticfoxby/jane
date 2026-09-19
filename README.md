@@ -1,4 +1,4 @@
-# 简 (Jane) 1.0.4.1
+# 简 (Jane) 1.0.5
 
 Jane aligns the server Mod JARs that remote clients require, and conservatively includes JARs whose client need cannot be determined. It does not synchronize the whole `mods` folder. Extra client mods, such as Sodium, Iris, maps, HUD mods, and ReplayMod, are left alone.
 
@@ -25,9 +25,7 @@ On first dedicated-server start, Jane creates `<gameDir>/config/jane/server.json
 {
   "mode": "AUTO_DISCOVER",
   "serverProvider": {
-    "enabled": false,
-    "bindPort": 25566,
-    "advertisedPort": 25566
+    "mode": "AUTO"
   }
 }
 ```
@@ -36,9 +34,13 @@ A copy is in [`config/jane/server.json`](config/jane/server.json). Jane automati
 
 Fabric `SERVER` mods are excluded before hashing or network lookup. Fabric `CLIENT` mods are also excluded, with a warning because they are unexpected on a dedicated server. For universal mods, Jane hashes the actual top-level JAR and queries Modrinth by exact SHA-512. `client_and_server` enters the client manifest. Server-only, client-optional, client-only, and singleplayer-only environments are excluded. A successful lookup with no matching hash, `unknown`, or a future environment value enters the manifest **conservatively**. This may require a client to install a mod whose client need is not yet confirmed. It never means an unknown JAR is safe to run.
 
-Legacy `requiredMods` and `environmentOverrides` fields remain accepted but are ignored; Jane never deletes them. The write-only diagnostic `<gameDir>/config/jane/discovered-mods.json` records each discovered mod's decision and reason without absolute paths. It is never used as input. Modrinth requests are split into batches of at most 100 hashes; a network error, non-200 response, oversized body, or malformed metadata fails the entire manifest. Protocol 2 supports at most 128 final client-sync entries and rejects older Protocol 1 clients.
+Legacy `requiredMods` and `environmentOverrides` fields remain accepted but are ignored; Jane never deletes them. The write-only diagnostic `<gameDir>/config/jane/discovered-mods.json` records each discovered mod's decision and reason without absolute paths. It is never used as input. Modrinth requests are split into batches of at most 100 hashes; a network error, non-200 response, oversized body, or malformed metadata fails the entire manifest. Protocol 3 supports at most 128 final client-sync entries and rejects older Protocol 1 and 2 clients.
 
-ServerProvider is disabled by default. With it disabled, files already present locally or found by Modrinth exact hash can be handled; files absent from public sources remain unresolved. To offer those files from the current server, set `serverProvider.enabled` to `true` and configure `bindPort` and `advertisedPort`. The provider listens on the extra TCP `bindPort`; startup fails if this port cannot be opened. The client uses the captured Minecraft server host plus `advertisedPort`, never a host supplied by server configuration. For example, a Minecraft connection to `example.com:41476` can use `bindPort: 25566` and `advertisedPort: 41477` with an administrator-managed FRP mapping from `example.com:41477` to local port 25566. NAT, router, firewall, and FRP TCP mapping must be configured by the administrator; Jane does not open them automatically. Only serve JARs you have the right to redistribute.
+ServerProvider defaults to `AUTO`, which uses the existing Minecraft TCP entry point. No second listener, router port, or FRP mapping is needed for a direct server or transparent TCP forward. The client resolves the captured logical Minecraft address using Minecraft's address/SRV resolver and opens a second connection to that endpoint. A dedicated login marker lets Jane take over only that connection before ordinary login authentication; the marker grants no file access. The server never supplies an arbitrary download host. Status requests and unmarked player logins remain on the ordinary Minecraft path.
+
+The available `serverProvider.mode` values are `AUTO`, `MINECRAFT`, `SEPARATE_PORT`, and `DISABLED`. `AUTO` currently selects `MINECRAFT`. `DISABLED` makes non-public required files unresolved. A legacy `enabled: true` configuration remains a `SEPARATE_PORT` configuration; the exact old generated `enabled: false` default is interpreted as `AUTO`, while a customized disabled configuration stays disabled. Jane leaves existing configuration files untouched and logs the interpretation.
+
+Minecraft-aware proxies, including some BungeeCord/Velocity deployments, may reject the marked login before it reaches Jane. These networks can use the advanced separate-port fallback until proxy-specific support exists. For example, `"serverProvider": {"mode":"SEPARATE_PORT","bindPort":25566,"advertisedPort":41477}` listens locally on 25566 while an administrator routes `example.com:41477` to that port. The client uses its captured Minecraft host plus `advertisedPort`; Jane does not configure NAT, firewall, or FRP. If the separate port cannot bind, startup fails. Only serve JARs you have the right to redistribute.
 
 Each login receives a different memory-only 256-bit token. An unused offer remains valid for up to 60 minutes; after the first successful request, each authorized transfer refreshes a 15-minute idle lifetime. The token permits only hashes in that login's required manifest, and only manifest JARs can be served. ServerProvider uses plain TCP: SHA-512 checks protect file integrity, but transport is **not encrypted**. The player must confirm the exact server file list before any ServerProvider connection. That confirmation applies only to the current session and exact SHA-512 file set; it is never remembered. A Modrinth lookup failure remains unresolved; an absent exact hash can be offered by ServerProvider. A failed server transfer cannot create a pending install. Public and server files share one staging workspace and one final update plan. Source selection is recalculated on each new sync session, so an exact JAR later added to Modrinth will use the public source on the next attempt.
 
