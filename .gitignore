@@ -1,0 +1,28 @@
+.gradle/
+build/
+out/
+run/
+logs/
+/mods/
+/jane/
+/backups/
+.idea/
+*.iml
+.vscode/
+*.log
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
+
+# Local project instructions
+AGENTS.md
+
+# Local secrets and signing material
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore

@@ -1,0 +1,6 @@
+{
+  "mode": "AUTO_DISCOVER",
+  "serverProvider": {
+    "mode": "AUTO"
+  }
+}
