@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class SyncNoticeTest {
@@ -49,6 +50,8 @@ class SyncNoticeTest {
                 session.snapshot().resolution().items().get(0).availability());
         assertEquals(SyncNotice.Kind.LOOKUP_FAILED, SyncNotice.select(session.snapshot(), false));
         assertFalse(session.snapshot().canInstall());
+        assertTrue(session.selectModIds(Set.of()));
+        assertEquals(SyncNotice.Kind.INCOMPLETE, SyncNotice.select(session.snapshot(), false));
     }
 
     @Test

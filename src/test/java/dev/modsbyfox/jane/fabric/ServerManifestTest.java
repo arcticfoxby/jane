@@ -20,7 +20,7 @@ class ServerManifestTest {
 
     private Path mods() { return gameDir.resolve("mods"); }
 
-    @Test void universalClientAndFabricApiEnterPhysicalProtocolThreeManifest() throws Exception {
+    @Test void universalClientAndFabricApiEnterPhysicalManifest() throws Exception {
         Path universal = PhysicalJarFixture.mod(mods(), "universal.jar", "universal", "*");
         Path client = PhysicalJarFixture.mod(mods(), "client.jar", "client", "client");
         Path fabricApi = PhysicalJarFixture.mod(mods(), "fabric-api.jar", "fabric-api", "*");
@@ -28,7 +28,7 @@ class ServerManifestTest {
         PhysicalJarFixture.mod(mods(), "jane.jar", "jane", "*");
 
         ServerManifest.BuildResult result = ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir);
-        assertEquals(3, result.manifest().protocol());
+        assertEquals(RequiredManifest.PROTOCOL, result.manifest().protocol());
         assertEquals(List.of("client", "fabric-api", "universal"), result.manifest().entries().stream()
                 .map(entry -> entry.modId()).toList());
         for (Path jar : List.of(universal, client, fabricApi)) {
@@ -83,6 +83,7 @@ class ServerManifestTest {
         PhysicalJarFixture.mod(mods(), "extra.jar", "extra", "client");
         IOException error = assertThrows(IOException.class,
                 () -> ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir));
-        assertTrue(error.getMessage().contains("more client-sync entries than Protocol 3 supports"));
+        assertTrue(error.getMessage().contains("more client-sync entries than Protocol "
+                + RequiredManifest.PROTOCOL + " supports"));
     }
 }

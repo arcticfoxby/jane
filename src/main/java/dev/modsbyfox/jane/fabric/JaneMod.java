@@ -1,6 +1,7 @@
 package dev.modsbyfox.jane.fabric;
 
 import dev.modsbyfox.jane.core.ManifestCodec;
+import dev.modsbyfox.jane.core.LoginStatus;
 import dev.modsbyfox.jane.core.RequiredManifest;
 import dev.modsbyfox.jane.core.ServerProviderOffer;
 import dev.modsbyfox.jane.core.ServerProviderCore;
@@ -91,9 +92,21 @@ public final class JaneMod implements ModInitializer {
                 handler.disconnect(Component.translatable("jane.protocol.incompatible"));
                 return;
             }
-            int status = buf.readUnsignedByte();
-            if (status == 0) return;
-            if (status == 1) handler.disconnect(Component.translatable("jane.client.action_required"));
+            final LoginStatus status;
+            try {
+                status = LoginStatus.fromCode(buf.readUnsignedByte());
+            } catch (IllegalArgumentException exception) {
+                handler.disconnect(Component.translatable("jane.protocol.incompatible"));
+                return;
+            }
+            if (status == LoginStatus.USER_OVERRIDE) {
+                LOGGER.warn("{}loginStatus=USER_OVERRIDE requiredBaseline=NOT_SATISFIED janeGate=ALLOWED; "
+                        + "Minecraft/Fabric may still reject login", JaneLog.server());
+                return;
+            }
+            if (status.allowsJaneGate()) return;
+            if (status == LoginStatus.ACTION_REQUIRED)
+                handler.disconnect(Component.translatable("jane.client.action_required"));
             else handler.disconnect(Component.translatable("jane.protocol.incompatible"));
         });
         ServerLoginConnectionEvents.QUERY_START.register((handler, server, sender, synchronizer) -> {

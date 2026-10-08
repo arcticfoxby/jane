@@ -80,7 +80,8 @@ final class ServerManifest {
                 throw new IOException("Invalid discovered manifest entry: " + candidate.modId(), exception);
             }
             if (required.size() > RequiredManifest.MAX_ENTRIES)
-                throw new IOException("Jane discovered more client-sync entries than Protocol 3 supports");
+                throw new IOException("Jane discovered more client-sync entries than Protocol "
+                        + RequiredManifest.PROTOCOL + " supports");
             classified.add(new Classified(item, jar, ClientSyncDecision.SYNC, "physical_client_target"));
             LOGGER.info("{}discovery modId={} decision=SYNC reason=physical_client_target", JaneLog.server(), candidate.modId());
         }

@@ -1,64 +1,21 @@
-# 简 (Jane) 1.1.7 Beta
+---
 
-Jane scans physical Fabric JARs directly in the dedicated server's `mods` directory. Fabric `server`-only JARs and Jane itself are excluded; every other valid top-level Fabric Mod JAR becomes part of the server-required physical client baseline. Nested JARs are never synchronized independently. Extra client mods absent from the server, such as Sodium, Iris, maps, HUD mods, and ReplayMod, stay in place unless the player explicitly selects client-only extras to disable.
+# 简（Jane）1.1.8 Beta
 
-- Minecraft Java Edition **1.20.1**, **Fabric**, **Java 17**.
-- Install **Fabric Loader**, **Fabric API**, and **Jane** on both the dedicated server and client. Jane does not install these prerequisites.
-- Jane is transparent when its client connects to a server without Jane, and does nothing in singleplayer.
-- The server supplies mod ID, version, top-level JAR size, and SHA-512. The client compares those required entries against direct physical `mods/*.jar` files and their root `fabric.mod.json`, never nested Loader containers. Equal version strings with different JAR hashes do not pass.
+Jane targets Minecraft Java Edition 1.20.1, Fabric, and Java 17. Install a compatible Jane version on both client and server. Build with `gradlew.bat build`; use `build/libs/jane-1.1.8-beta.jar` rather than a development JAR.
 
-Jane only ensures that the server-required exact physical JAR is present in the client's `mods` directory. Additional client JARs declaring the same Mod ID are preserved; Jane does not remove or replace them merely because they are duplicates. If multiple same-ID JARs exist but none matches the required SHA-512, Jane installs the exact required JAR alongside them. Fabric Loader ultimately chooses which candidate to load, and Jane cannot guarantee compatibility of extra duplicate client JARs.
-- Source lookup starts only after the player selects **Resolve files**. It uses the exact SHA-512 on **Modrinth** for each mismatched required file and does not automatically download. A trusted exact-hash file can then be transferred from Modrinth or through the current server; its bytes are always checked against the required size and SHA-512. Jane normally keeps the trusted filename, but an exact file added alongside retained same-ID JARs gets a deterministic `jane-<modId>-<hash12>.jar` local name to avoid overwriting an existing file. The player can cancel a transfer batch and switch routes without losing verified staged files. Files found only on the current server still require a separate, explicit, per-session confirmation. Downloads are staged and verified before any replacement is offered. A lookup error is shown separately, not treated as evidence that Modrinth lacks the file.
-- Exact-hash Modrinth downloads can follow a limited number of HTTPS redirects between explicitly approved Modrinth CDN hosts. Jane validates every hop, then checks the final body against the server's exact file size and SHA-512 before staging it.
-- Jane writes versioned resolution, route, download, verification, cancellation, and route-switch events through Minecraft/Fabric's normal logger into `logs/latest.log`; it does not create a separate Jane log file.
-- On Windows, after the player confirms, Jane immediately opens a separate CMD updater. It waits for that Minecraft process to exit, displays backup and installation progress, then keeps the window open until the player presses a key. Jane prompts the player to restart Minecraft manually; it never kills Java processes or restarts the game. Failed updates still attempt rollback.
-- Successful backups are kept separately by locally generated server ID, up to **five** restore points per server. Pending updates are checked on the next launch; they never run again silently.
+## Selective Mod Sync
 
-## Build
+The server continues to discover direct physical JARs in its `mods/` folder and supplies each required file's version, size, and SHA-512. Required files that the client has not matched are selected for installation by default. An exact-hash Modrinth project with `client_side=optional` can be shown as an optional installation suggestion, initially unselected. This is metadata-based advice, not a server declaration that the file is safe to omit. Unverified or unavailable metadata keeps the file in the server-required group.
 
-Run `gradlew.bat build` from this directory. The installable JAR is generated under `build/libs/`. Do not install the `-dev.jar` build artifact.
+Players may deselect a required file or select an optional suggestion. Jane downloads only the selected files that are still missing or mismatched, verifies their size and SHA-512, and stages them before the Windows updater changes `mods/`. Selected updates require the usual close, install, and manual restart flow. Skipping a file never makes its physical comparison pass. On the next connection, an unsatisfied required file appears again and is selected by default. Jane does not permanently remember skip authorization.
 
-The project pins Gradle 8.7, Fabric Loom 1.6.12, Fabric Loader 0.16.14, Fabric API 0.92.8+1.20.1, and Mojang official mappings. The Gradle Wrapper distribution and wrapper JAR are checked against Gradle's published SHA-256 values.
+Jane records the choice in Minecraft's `logs/latest.log` and in a bounded local `jane/logs/sync-decisions.log`. It does not send the client's complete mod list or checkbox selections to the server. Minecraft, Fabric, and other mods may still reject a connection or malfunction when a needed file is omitted.
 
-## Server configuration
+## User Override Boundary
 
-On first dedicated-server start, Jane creates `<gameDir>/config/jane/server.json`:
+When a player chooses to try joining without installing an unsatisfied required file, Jane presents a risk confirmation. A confirmed override is limited to one reconnect with the same server and manifest, and the client checks its files again before using it. Jane reports that attempt as `USER_OVERRIDE`, never as an exact match. The server's Jane gate may allow the attempt, while Fabric and other compatibility checks continue normally. Jane verifies files it downloads, but cannot guarantee a working game after the player skips a needed file.
 
-```json
-{
-  "mode": "AUTO_DISCOVER",
-  "serverProvider": {
-    "mode": "AUTO"
-  }
-}
-```
+## Protocol Compatibility
 
-A copy is in [`config/jane/server.json`](config/jane/server.json). Jane scans direct `.jar` files in this instance's `mods` directory and reads each root `fabric.mod.json` (schema 0 or 1) without extracting files. JARs without that metadata are skipped with a diagnostic; malformed or oversized Fabric metadata fails startup closed. When multiple physical top-level JARs declare the same Mod ID, Jane first follows Fabric Loader's selected active candidate. If no candidate is active in the dedicated-server environment, Jane may select a unique newest SemanticVersion. Ambiguous or non-comparable duplicates fail closed. Jane does not alter the duplicate files. Fabric API is included when it exists as a non-server-only physical JAR. Minecraft, Java, and Fabric Loader are not invented as manifest files.
-
-Fabric `server`-only mods and Jane are excluded before hashing. Universal (`*` or omitted environment) and `client` mods enter the required manifest with the size and SHA-512 of the exact physical JAR. Server startup does not query Modrinth: the server JAR determines what is required, while Modrinth is only a possible public source for that same file. After the player selects **Resolve files**, the client checks Modrinth by exact SHA-512 without starting a download. For a confirmed public file, the player chooses either Modrinth or the current server as the transfer route. A file absent by exact hash can be offered by ServerProvider only after separate confirmation; a lookup failure stays distinct and can be retried.
-
-Legacy `requiredMods` and `environmentOverrides` fields remain accepted but are ignored; Jane never deletes them. The write-only diagnostic `<gameDir>/config/jane/discovered-mods.json` records physical discovery decisions without absolute paths or server-side Modrinth environment classifications. It is never used as input. Protocol 3 supports at most 128 final client-sync entries and rejects older Protocol 1 and 2 clients.
-
-ServerProvider defaults to `AUTO`, which uses the existing Minecraft TCP entry point. No second listener, router port, or FRP mapping is needed for a direct server or transparent TCP forward. The client resolves the captured logical Minecraft address using Minecraft's address/SRV resolver and opens a second connection to that endpoint. A dedicated login marker lets Jane take over only that connection before ordinary login authentication; the marker grants no file access. The server never supplies an arbitrary download host. Status requests and unmarked player logins remain on the ordinary Minecraft path.
-
-The available `serverProvider.mode` values are `AUTO`, `MINECRAFT`, `SEPARATE_PORT`, and `DISABLED`. `AUTO` currently selects `MINECRAFT`. `DISABLED` makes non-public required files unresolved. A legacy `enabled: true` configuration remains a `SEPARATE_PORT` configuration; the exact old generated `enabled: false` default is interpreted as `AUTO`, while a customized disabled configuration stays disabled. Jane leaves existing configuration files untouched and logs the interpretation.
-
-Minecraft-aware proxies, including some BungeeCord/Velocity deployments, may reject the marked login before it reaches Jane. These networks can use the advanced separate-port fallback until proxy-specific support exists. For example, `"serverProvider": {"mode":"SEPARATE_PORT","bindPort":25566,"advertisedPort":41477}` listens locally on 25566 while an administrator routes `example.com:41477` to that port. The client uses its captured Minecraft host plus `advertisedPort`; Jane does not configure NAT, firewall, or FRP. If the separate port cannot bind, startup fails. Only serve JARs you have the right to redistribute.
-
-Each login receives a different memory-only 256-bit token. An unused offer remains valid for up to 60 minutes; after the first successful request, each authorized transfer refreshes a 15-minute idle lifetime. The token permits only hashes in that login's required manifest, and only manifest JARs can be served. ServerProvider uses plain TCP: SHA-512 checks protect file integrity, but transport is **not encrypted**. Files available only from the current server require explicit confirmation of their exact file list before a ServerProvider connection. That confirmation applies only to the current session and exact SHA-512 file set; it is never remembered. Public exact-hash files can use the current server as a transport without that second executable-source trust confirmation. A Modrinth lookup failure is reported separately; an absent exact hash can be offered by ServerProvider. A failed server transfer cannot create a pending install. Public and server files share one staging workspace and one final update plan. Exact-hash availability is recalculated on each new sync session.
-
-The client never sends its complete mod list. A Jane server sends a login query; the client responds with only one byte: PASS, CLIENT_ACTION_REQUIRED, or PROTOCOL_ERROR. On a required mismatch the login ends before the sync screen opens. A local compatibility review may also require action after the required files pass. Server-provided URLs, paths, filenames, and commands are never accepted.
-
-## Client compatibility review
-
-Jane verifies the server-required exact physical JAR baseline. Compatibility between additional client mods and the server's mod environment is outside that baseline and is not automatically guaranteed. The server's physical manifest policy does not change. Jane scans the client's direct `mods/*.jar` files once per login; after the required baseline passes, it shows extra physical Fabric mods that declare `environment=client` in a separate review. Server-required IDs, even if marked client-only, and retained same-ID duplicates never become selectable extras. Universal extras are shown for information only, initially collapsed.
-
-The player can **Direct Join** without changing any extra files. Jane saves only a local fingerprint of the explicit client-only extras for this server and reconnects automatically. Unchanged files do not prompt again; adding, removing, or changing an explicit extra brings the review back. The server receives only the one-byte login status, never the client mod list, selected checkboxes, or fingerprint. Universal extras alone do not block joining.
-
-Alternatively, the player can select explicit client-only extras to disable. After confirmation Jane opens a Windows CMD helper, closes Minecraft, waits for that process to exit, and moves only the selected JARs from `mods` to `jane/disabled/<serverId>/<timestamp>/`. It writes local `disabled.json` recovery information and rolls back earlier moves if a later move fails. It never permanently deletes those JARs. Restart Minecraft manually afterward. To restore them, close Minecraft, inspect the saved files, and move the desired JARs back into this instance's `mods` directory manually. Jane does not calculate the dependency graph of client extras; disabling a mod can prevent another mod that depends on it from starting.
-
-## Local files
-
-Jane uses only the active instance's game directory. The client may create `jane/cache`, `jane/staging`, `jane/pending`, `jane/backups`, `jane/client-review`, and `jane/disabled` beside that instance's `mods` folder. A pending update contains `pending.json`, `backup.json`, and `update.bat`. The BAT logs within that pending directory. Jane never edits another Minecraft instance.
-
-Automatic replacement requires Windows and conservative JAR filenames. If an existing or downloaded filename cannot be represented safely in CMD, Jane stops the automatic path and the player must install it manually.
+Jane V1.1.8 Beta uses **Protocol 4**. Client and server Jane versions must be compatible; Protocol 3 is not silently downgraded. Protocol 4 distinguishes `EXACT_PASS`, `ACTION_REQUIRED`, `PROTOCOL_ERROR`, and `USER_OVERRIDE` without sending a client's private mod inventory.

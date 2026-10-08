@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.modsbyfox.jane.core.ClientInstallCategory;
 import dev.modsbyfox.jane.core.ManifestEntry;
 import dev.modsbyfox.jane.core.ModrinthDownload;
 import dev.modsbyfox.jane.core.PathSafety;
@@ -19,23 +20,43 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongConsumer;
+import java.util.regex.Pattern;
 
 final class ModrinthService {
     private static final int MAX_JSON = 1024 * 1024;
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15))
-            .followRedirects(HttpClient.Redirect.NEVER).build();
+    private static final Pattern PROJECT_ID = Pattern.compile("[A-Za-z0-9]{1,64}");
+    private final HttpClient http;
+    private final JsonFetcher json;
+
+    @FunctionalInterface interface JsonFetcher {
+        Optional<JsonObject> get(URI uri) throws IOException, InterruptedException;
+    }
+
+    record ClassifiedSource(Optional<ResolutionPlan.Source> source, ClientInstallCategory category) { }
+
+    ModrinthService() { this(null); }
+
+    ModrinthService(JsonFetcher json) {
+        http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15))
+                .followRedirects(HttpClient.Redirect.NEVER).build();
+        this.json = json == null ? this::fetchJson : json;
+    }
 
     Optional<ResolutionPlan.Source> find(ManifestEntry target) throws IOException, InterruptedException {
+        return lookup(target, false).source();
+    }
+
+    /** Project metadata can advise optional installation only after an exact-file match. */
+    ClassifiedSource findClassified(ManifestEntry target) throws IOException, InterruptedException {
+        return lookup(target, true);
+    }
+
+    private ClassifiedSource lookup(ManifestEntry target, boolean classify) throws IOException, InterruptedException {
         URI uri = URI.create("https://api.modrinth.com/v2/version_file/" + target.sha512() + "?algorithm=sha512");
-        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.1.7-beta")
-                .header("Accept", "application/json").GET().build();
-        HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        try (InputStream body = response.body()) {
-            if (response.statusCode() == 404) return Optional.empty();
-            if (response.statusCode() != 200) throw new IOException("Modrinth lookup returned HTTP " + response.statusCode());
-            byte[] bytes = readBounded(body, MAX_JSON);
-            JsonObject version = JsonParser.parseString(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+        try {
+            Optional<JsonObject> response = json.get(uri);
+            if (response.isEmpty()) return new ClassifiedSource(Optional.empty(), ClientInstallCategory.SERVER_REQUIRED);
+            JsonObject version = response.get();
             if (!contains(version.getAsJsonArray("game_versions"), "1.20.1")
                     || !contains(version.getAsJsonArray("loaders"), "fabric"))
                 throw new IOException("Modrinth returned incompatible metadata for exact hash");
@@ -54,7 +75,9 @@ final class ModrinthService {
                         || download.getUserInfo() != null || download.getPort() != -1) {
                     throw new IOException("Modrinth supplied an untrusted download URL");
                 }
-                return Optional.of(new ResolutionPlan.Source(name, download, size));
+                ResolutionPlan.Source source = new ResolutionPlan.Source(name, download, size);
+                ClientInstallCategory category = classify ? projectCategory(version) : ClientInstallCategory.SERVER_REQUIRED;
+                return new ClassifiedSource(Optional.of(source), category);
             }
             throw new IOException("Modrinth response did not contain the requested exact file");
         } catch (RuntimeException exception) {
@@ -62,11 +85,42 @@ final class ModrinthService {
         }
     }
 
+    private ClientInstallCategory projectCategory(JsonObject version) throws InterruptedException {
+        try {
+            String projectId = version.get("project_id").getAsString();
+            if (!PROJECT_ID.matcher(projectId).matches()) return ClientInstallCategory.SERVER_REQUIRED;
+            Optional<JsonObject> response = json.get(URI.create("https://api.modrinth.com/v2/project/" + projectId));
+            if (response.isEmpty()) return ClientInstallCategory.SERVER_REQUIRED;
+            JsonObject project = response.get();
+            if (!projectId.equals(project.get("id").getAsString())) return ClientInstallCategory.SERVER_REQUIRED;
+            return ClientInstallCategory.fromModrinthEvidence(true, project.get("client_side").getAsString());
+        } catch (IOException | RuntimeException exception) {
+            return ClientInstallCategory.SERVER_REQUIRED;
+        }
+    }
+
+    private Optional<JsonObject> fetchJson(URI uri) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
+                .header("User-Agent", "modsbyfox/Jane/1.1.8-beta")
+                .header("Accept", "application/json").GET().build();
+        HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        try (InputStream body = response.body()) {
+            if (response.statusCode() == 404) return Optional.empty();
+            if (response.statusCode() != 200) throw new IOException("Modrinth lookup returned HTTP " + response.statusCode());
+            byte[] bytes = readBounded(body, MAX_JSON);
+            try {
+                return Optional.of(JsonParser.parseString(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject());
+            } catch (RuntimeException exception) {
+                throw new IOException("Invalid Modrinth response", exception);
+            }
+        }
+    }
+
     void download(ResolutionPlan.Source source, ManifestEntry target, java.nio.file.Path destination,
                   BooleanSupplier cancelled, LongConsumer progress) throws IOException, InterruptedException {
         ModrinthDownload.download(source, target, destination, cancelled, progress, uri -> {
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(5))
-                    .header("User-Agent", "modsbyfox/Jane/1.1.7-beta").GET().build();
+                    .header("User-Agent", "modsbyfox/Jane/1.1.8-beta").GET().build();
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             return new ModrinthDownload.Response(response.statusCode(), response.headers().allValues("Location"), response.body());
         });

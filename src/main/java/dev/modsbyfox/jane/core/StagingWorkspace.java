@@ -44,19 +44,31 @@ public final class StagingWorkspace {
 
     public synchronized UpdatePlan prepareIfComplete(Path gameDir, JaneSyncSession session,
                                                      java.util.function.BooleanSupplier cancelled) throws IOException {
+        return prepareIfComplete(gameDir, session, cancelled,
+                session.context().manifest().entries().stream().map(ManifestEntry::modId)
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet()));
+    }
+
+    /** Only selected, unsatisfied manifest entries may become pending update operations. */
+    public synchronized UpdatePlan prepareIfComplete(Path gameDir, JaneSyncSession session,
+                                                     java.util.function.BooleanSupplier cancelled,
+                                                     Set<String> selectedModIds) throws IOException {
         JaneSyncSession.Snapshot snapshot = session.snapshot();
+        Set<String> selected = Set.copyOf(selectedModIds);
+        Set<String> manifestIds = session.context().manifest().entries().stream().map(ManifestEntry::modId)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (!manifestIds.containsAll(selected)) throw new IOException("Selection contains unknown required mod");
         if (snapshot.resolution() == null
-                || snapshot.resolution().count(ResolutionPlan.Availability.LOOKUP_FAILED) != 0
-                || snapshot.resolution().count(ResolutionPlan.Availability.UNRESOLVED) != 0
                 || snapshot.resolution().count(ResolutionPlan.Availability.LOCAL_ERROR) != 0
                 || snapshot.localErrorCount() != 0
-                || snapshot.items().stream().anyMatch(item ->
-                (item.item().availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
-                        || item.item().availability() == ResolutionPlan.Availability.SERVER_ONLY)
-                        && item.state() != JaneSyncSession.RuntimeState.READY)) return null;
+                || snapshot.items().stream().anyMatch(item -> selected.contains(item.item().comparison().required().modId())
+                && item.item().availability() != ResolutionPlan.Availability.ALREADY_PRESENT
+                && item.state() != JaneSyncSession.RuntimeState.READY)) return null;
         List<ResolutionPlan.Item> downloads = snapshot.resolution().items().stream()
-                .filter(item -> item.availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
-                        || item.availability() == ResolutionPlan.Availability.SERVER_ONLY).toList();
+                .filter(item -> selected.contains(item.comparison().required().modId())
+                        && (item.availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                        || item.availability() == ResolutionPlan.Availability.SERVER_ONLY)).toList();
+        if (downloads.isEmpty()) return null;
         if (operations.size() != downloads.size()) throw new IOException("Incomplete staging operation list");
         if (!PathSafety.janeDirectory(gameDir, "staging", syncId).equals(directory))
             throw new IOException("Staging workspace changed");

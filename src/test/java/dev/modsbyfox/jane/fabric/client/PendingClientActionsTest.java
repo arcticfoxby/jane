@@ -18,6 +18,11 @@ class PendingClientActionsTest {
                 List.of(new Comparison.Result(entry, null, Comparison.Status.MISSING, null)));
     }
 
+    private PendingClientAction.RequiredSync action(PendingSyncContext context) {
+        // This state-machine test does not start Minecraft, so no ServerData is available.
+        return new PendingClientAction.RequiredSync(context, null, false);
+    }
+
     @Test void mismatchContextSurvivesDisconnectAndRejectsStaleConnection() {
         PendingClientActions actions = new PendingClientActions();
         Object firstConnection = new Object();
@@ -26,10 +31,10 @@ class PendingClientActionsTest {
         PendingSyncContext second = context("b.example.com");
         actions.begin(firstConnection);
         assertNull(actions.take());
-        assertTrue(actions.replace(firstConnection, new PendingClientAction.RequiredSync(first)));
+        assertTrue(actions.replace(firstConnection, action(first)));
         actions.begin(secondConnection);
-        assertFalse(actions.replace(firstConnection, new PendingClientAction.RequiredSync(first)));
-        assertTrue(actions.replace(secondConnection, new PendingClientAction.RequiredSync(second)));
+        assertFalse(actions.replace(firstConnection, action(first)));
+        assertTrue(actions.replace(secondConnection, action(second)));
         actions.clearIfContext(first);
         PendingClientAction taken = actions.take();
         assertInstanceOf(PendingClientAction.RequiredSync.class, taken);
@@ -43,17 +48,17 @@ class PendingClientActionsTest {
         Object connection = new Object();
         PendingSyncContext sync = context("a.example.com");
         actions.begin(connection);
-        assertTrue(actions.replace(connection, new PendingClientAction.RequiredSync(sync)));
+        assertTrue(actions.replace(connection, action(sync)));
         actions.clearIfContext(sync);
         assertNull(actions.take());
         actions.begin(connection);
-        assertTrue(actions.replace(connection, new PendingClientAction.RequiredSync(sync)));
+        assertTrue(actions.replace(connection, action(sync)));
         assertTrue(actions.markPassed(connection));
         assertNull(actions.take());
         assertTrue(actions.takePassed());
         assertFalse(actions.takePassed());
         actions.begin(connection);
-        assertTrue(actions.replace(connection, new PendingClientAction.RequiredSync(sync)));
+        assertTrue(actions.replace(connection, action(sync)));
         actions.begin(new Object());
         assertNull(actions.take());
     }

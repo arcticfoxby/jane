@@ -8,6 +8,7 @@ import dev.modsbyfox.jane.core.PathSafety;
 import dev.modsbyfox.jane.core.ResolutionPlan;
 import dev.modsbyfox.jane.core.StagedFileVerifier;
 import dev.modsbyfox.jane.core.StagingWorkspace;
+import dev.modsbyfox.jane.core.SyncSelection;
 import dev.modsbyfox.jane.core.ServerProviderClient;
 import dev.modsbyfox.jane.core.ServerProviderTransport;
 import dev.modsbyfox.jane.core.UpdatePlan;
@@ -34,13 +35,22 @@ final class StagingService {
     private StagingService() { }
 
     static void resolve(JaneSyncSession session, BooleanSupplier cancelled) throws InterruptedException {
+        resolve(session, null, cancelled);
+    }
+
+    static void resolve(JaneSyncSession session, SyncSelection selection, BooleanSupplier cancelled)
+            throws InterruptedException {
         String prefix = JaneLog.client(session.context().serverId());
         LOGGER.info("{}resolution started required={}", prefix, session.context().results().size());
         ModrinthService modrinth = new ModrinthService();
+        Map<String, dev.modsbyfox.jane.core.ClientInstallCategory> categories = new HashMap<>();
         ResolutionPlan resolution = ResolutionPlan.resolve(session.context().results(), target -> {
             if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
             try {
-                return modrinth.find(target);
+                if (selection == null) return modrinth.find(target);
+                ModrinthService.ClassifiedSource classified = modrinth.findClassified(target);
+                categories.put(target.modId(), classified.category());
+                return classified.source();
             } catch (IOException exception) {
                 LOGGER.warn("{}source lookup failed modId={}", prefix, target.modId(), exception);
                 throw exception;
@@ -48,6 +58,10 @@ final class StagingService {
         }, session.context().provider() != null, session::resolutionProgress);
         if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
         session.publishResolution(resolution);
+        if (selection != null) {
+            selection.applyCategories(categories);
+            session.selectModIds(selection.selectedModIds());
+        }
         for (ResolutionPlan.Item item : resolution.items()) {
             LOGGER.info("{}resolve modId={} availability={} hash={}", prefix, item.comparison().required().modId(), item.availability(),
                     item.comparison().required().sha512().substring(0, 12));
@@ -67,12 +81,23 @@ final class StagingService {
     }
 
     static void retryLookupFailures(JaneSyncSession session, BooleanSupplier cancelled) throws InterruptedException {
+        retryLookupFailures(session, null, cancelled);
+    }
+
+    static void retryLookupFailures(JaneSyncSession session, SyncSelection selection, BooleanSupplier cancelled)
+            throws InterruptedException {
         ResolutionPlan old = session.snapshot().resolution();
         if (old == null) throw new IllegalStateException("Resolution not available");
         ModrinthService modrinth = new ModrinthService();
+        Map<String, dev.modsbyfox.jane.core.ClientInstallCategory> categories = new HashMap<>();
         ResolutionPlan refreshed = old.retryLookupFailures(target -> {
             if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
-            try { return modrinth.find(target); }
+            try {
+                if (selection == null) return modrinth.find(target);
+                ModrinthService.ClassifiedSource classified = modrinth.findClassified(target);
+                categories.put(target.modId(), classified.category());
+                return classified.source();
+            }
             catch (IOException exception) {
                 LOGGER.warn("{}source lookup retry failed modId={}", JaneLog.client(session.context().serverId()),
                         target.modId(), exception);
@@ -81,6 +106,10 @@ final class StagingService {
         }, session.context().provider() != null);
         if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
         session.publishRetryResolution(refreshed);
+        if (selection != null) {
+            selection.applyCategories(categories);
+            session.selectModIds(selection.selectedModIds());
+        }
         LOGGER.info("{}lookup retry complete failedRemaining={}", JaneLog.client(session.context().serverId()),
                 refreshed.count(ResolutionPlan.Availability.LOOKUP_FAILED));
     }
@@ -105,8 +134,9 @@ final class StagingService {
         Map<String, Integer> fileNames = new HashMap<>();
         Set<String> oldNames = new HashSet<>();
         for (ResolutionPlan.Item item : resolution.items()) {
-            if (item.availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
-                    || item.availability() == ResolutionPlan.Availability.SERVER_ONLY)
+            if (session.snapshot().selectedModIds().contains(item.comparison().required().modId())
+                    && (item.availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                    || item.availability() == ResolutionPlan.Availability.SERVER_ONLY))
                 fileNames.merge(fileName(item).toLowerCase(Locale.ROOT), 1, Integer::sum);
         }
         for (Comparison.Result result : session.context().results()) {
@@ -180,7 +210,8 @@ final class StagingService {
             workspace.add(operation);
         }
         if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
-        UpdatePlan plan = workspace.prepareIfComplete(gameDir, session, cancelled);
+        UpdatePlan plan = workspace.prepareIfComplete(gameDir, session, cancelled,
+                session.snapshot().selectedModIds());
         if (plan == null) {
             LOGGER.info("{}batch complete pending withheld unresolved={} lookupFailed={} localError={} ready={} requested={}", prefix,
                     resolution.count(ResolutionPlan.Availability.UNRESOLVED),

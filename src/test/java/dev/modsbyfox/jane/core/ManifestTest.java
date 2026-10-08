@@ -64,7 +64,7 @@ class ManifestTest {
     }
 
     @Test
-    void protocolThreeOfferIsBoundedAndValidated() throws Exception {
+    void protocolFourOfferIsBoundedAndValidated() throws Exception {
         RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
                 List.of(new ManifestEntry("create", "Create", "1", 10, A)));
         var enabled = new ManifestCodec.LoginOffer(manifest, new ServerProviderOffer(41477, "a".repeat(64)));
@@ -79,7 +79,7 @@ class ManifestTest {
         byte[] trailing = java.util.Arrays.copyOf(ManifestCodec.encode(enabled), ManifestCodec.encode(enabled).length + 1);
         assertThrows(IOException.class, () -> ManifestCodec.decodeOffer(trailing));
         byte[] old = ManifestCodec.encode(manifest);
-        ByteBuffer.wrap(old).putInt(2);
+        ByteBuffer.wrap(old).putInt(3);
         assertThrows(ManifestCodec.UnsupportedProtocolException.class, () -> ManifestCodec.decodeOffer(old));
         byte[] badLength = ManifestCodec.encode(enabled);
         ByteBuffer.wrap(badLength).putInt(badLength.length - 72, 65);
