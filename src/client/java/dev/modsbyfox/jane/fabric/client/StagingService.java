@@ -44,7 +44,9 @@ final class StagingService {
         LOGGER.info("{}resolution started required={}", prefix, session.context().results().size());
         ModrinthService modrinth = new ModrinthService();
         Map<String, dev.modsbyfox.jane.core.ClientInstallCategory> categories = new HashMap<>();
-        ResolutionPlan resolution = ResolutionPlan.resolve(session.context().results(), target -> {
+        List<Comparison.Result> comparisons = session.context().results();
+        int[] lookupsThrough = lookupProgress(comparisons);
+        ResolutionPlan resolution = ResolutionPlan.resolve(comparisons, target -> {
             if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
             try {
                 if (selection == null) return modrinth.find(target);
@@ -55,7 +57,8 @@ final class StagingService {
                 LOGGER.warn("{}source lookup failed modId={}", prefix, target.modId(), exception);
                 throw exception;
             }
-        }, session.context().provider() != null, session::resolutionProgress);
+        }, session.context().provider() != null,
+                processed -> session.resolutionProgress(lookupsThrough[processed]));
         if (cancelled.getAsBoolean()) throw new InterruptedException("Sync cancelled");
         session.publishResolution(resolution);
         if (selection != null) {
@@ -78,6 +81,17 @@ final class StagingService {
             LOGGER.info("{}ServerProvider unavailable; unresolved={}", prefix,
                     resolution.count(ResolutionPlan.Availability.UNRESOLVED));
         }
+    }
+
+    /** Comparison is already complete before this service starts; only network lookups count. */
+    static int[] lookupProgress(List<Comparison.Result> comparisons) {
+        int[] processed = new int[comparisons.size() + 1];
+        for (int index = 0; index < comparisons.size(); index++) {
+            Comparison.Status status = comparisons.get(index).status();
+            processed[index + 1] = processed[index] +
+                    (status == Comparison.Status.OK || status == Comparison.Status.FILE_ERROR ? 0 : 1);
+        }
+        return processed;
     }
 
     static void retryLookupFailures(JaneSyncSession session, BooleanSupplier cancelled) throws InterruptedException {

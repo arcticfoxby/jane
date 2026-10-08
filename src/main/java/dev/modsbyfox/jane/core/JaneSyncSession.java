@@ -30,6 +30,25 @@ public final class JaneSyncSession {
                     Math.min(100, (downloadedBytes() - batchReadyBytesAtStart) * 100 / total));
         }
         public long readyCount() { return items.stream().filter(i -> selected(i) && i.state() == RuntimeState.READY).count(); }
+        /** Every selected unmatched target counts, including unresolved sources that still block completion. */
+        public long selectedTransferTotalBytes() {
+            return items.stream().filter(i -> selected(i)
+                            && i.item().availability() != ResolutionPlan.Availability.ALREADY_PRESENT)
+                    .mapToLong(i -> i.item().comparison().required().fileSize()).sum();
+        }
+        /** Counts verified READY bytes plus bytes in the active transfer, never failed bytes. */
+        public long selectedTransferredBytes() {
+            return items.stream().filter(i -> selected(i) && downloadable(i.item().availability()))
+                    .mapToLong(i -> i.state() == RuntimeState.READY
+                            ? i.item().comparison().required().fileSize()
+                            : running && (i.state() == RuntimeState.DOWNLOADING || i.state() == RuntimeState.VERIFYING)
+                            ? i.downloadedBytes() : 0).sum();
+        }
+        public int overallProgressPercent() {
+            long total = selectedTransferTotalBytes();
+            return total == 0 ? 0 : (int) Math.max(0, Math.min(100,
+                    selectedTransferredBytes() * 100 / total));
+        }
         public long readyCount(ResolutionPlan.Availability availability) {
             return items.stream().filter(i -> selected(i) && i.item().availability() == availability
                     && i.state() == RuntimeState.READY).count();
@@ -138,7 +157,7 @@ public final class JaneSyncSession {
         List<ItemState> states = resolution.items().stream().map(item -> new ItemState(item,
                 downloadable(item.availability()) ? RuntimeState.WAITING : null, 0, null)).toList();
         snapshot = new Snapshot(resolution, states, false, false, null,
-                resolution.items().size(), resolution.items().size(), null, null, 0, 0, 0,
+                snapshot.resolutionProcessed(), snapshot.resolutionTotal(), null, null, 0, 0, 0,
                 snapshot.selectedModIds());
     }
     public synchronized void publishRetryResolution(ResolutionPlan resolution) {
@@ -176,7 +195,7 @@ public final class JaneSyncSession {
         Snapshot old = snapshot;
         if (old.resolution() == null || old.running() || old.error() != null || group == null || route == null
                 || (group == ResolutionPlan.TransferGroup.SERVER_ONLY
-                    && (route != ResolutionPlan.TransferRoute.CURRENT_SERVER || !confirmed || !old.groupReady(ResolutionPlan.TransferGroup.TRUSTED)))
+                    && (route != ResolutionPlan.TransferRoute.CURRENT_SERVER || !confirmed))
                 || (route == ResolutionPlan.TransferRoute.CURRENT_SERVER && context.provider() == null)
                 || old.queue(group).isEmpty()) return false;
         List<ItemState> reset = old.items().stream().map(i -> Snapshot.inGroup(i, group) && i.state() == RuntimeState.FAILED
