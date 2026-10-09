@@ -19,7 +19,7 @@ final class SyncSelectionScreen extends Screen {
     private final SyncScreen parent;
     private final JaneSyncSession session;
     private final SyncSelection selection;
-    private boolean requiredOpen = true;
+    private boolean requiredOpen;
     private boolean optionalOpen = true;
     private boolean matchedOpen;
     private boolean sourcesOpen;
@@ -28,7 +28,7 @@ final class SyncSelectionScreen extends Screen {
     private boolean draggingBar;
     private boolean draggingDeclarationBar;
 
-    private enum RowKind { REQUIRED_HEADER, BULK_REQUIRED, MATCHED_HEADER, OPTIONAL_HEADER,
+    private enum RowKind { REQUIRED_HEADER, MATCHED_HEADER, OPTIONAL_HEADER,
         SOURCES_HEADER, TRUSTED_SOURCE, SERVER_SOURCE, NOTE, MOD }
     private record Row(RowKind kind, int height, Comparison.Result comparison,
                        FormattedCharSequence note, int count) { }
@@ -77,6 +77,7 @@ final class SyncSelectionScreen extends Screen {
         List<FormattedCharSequence> lines = new ArrayList<>();
         lines.addAll(font.split(Component.translatable("jane.select.declaration1"), lineWidth));
         lines.addAll(font.split(Component.translatable("jane.select.declaration2"), lineWidth));
+        lines.addAll(font.split(Component.translatable("jane.select.declaration3"), lineWidth));
         return lines;
     }
 
@@ -112,10 +113,8 @@ final class SyncSelectionScreen extends Screen {
                 comparisons, categories, ClientInstallCategory.CLIENT_OPTIONAL);
         List<Comparison.Result> matched = SelectionScreenRows.matched(comparisons);
         rows.add(new Row(RowKind.REQUIRED_HEADER, 22, null, null, required.size()));
-        if (requiredOpen) {
+        if (requiredOpen)
             for (Comparison.Result result : required) rows.add(new Row(RowKind.MOD, 42, result, null, 0));
-            rows.add(new Row(RowKind.BULK_REQUIRED, 22, null, null, 0));
-        }
         rows.add(new Row(RowKind.MATCHED_HEADER, 22, null, null, matched.size()));
         if (matchedOpen)
             for (Comparison.Result result : matched) rows.add(new Row(RowKind.MOD, 42, result, null, 0));
@@ -156,15 +155,6 @@ final class SyncSelectionScreen extends Screen {
         }
         boolean hover = mouseX >= left && mouseX < right && mouseY >= y && mouseY < y + row.height();
         graphics.fill(left, y, right, y + row.height() - 2, hover ? 0xAA444444 : 0x88000000);
-        if (row.kind() == RowKind.BULK_REQUIRED) {
-            int half = (right - left) / 2;
-            int color = parent.selectionEditable() ? 0xFFFFFF : 0x999999;
-            graphics.drawString(font, fit(Component.translatable("jane.select.select_all").getString(), half - 10),
-                    left + 5, y + 6, color);
-            graphics.drawString(font, fit(Component.translatable("jane.select.select_none").getString(), half - 10),
-                    left + half + 5, y + 6, color);
-            return;
-        }
         if (row.kind() == RowKind.TRUSTED_SOURCE || row.kind() == RowKind.SERVER_SOURCE) {
             boolean server = row.kind() == RowKind.SERVER_SOURCE;
             boolean available = !server || parent.serverSourceAvailable();
@@ -201,9 +191,11 @@ final class SyncSelectionScreen extends Screen {
         String modId = result.required().modId();
         boolean matched = result.status() == Comparison.Status.OK;
         boolean selected = selection.isSelected(modId);
+        boolean adjustable = SelectionScreenRows.adjustable(result, selection.category(modId));
         int textLeft = left + 25;
-        graphics.drawString(font, matched ? "✓" : selected ? "☑" : "☐", left + 6, y + 13,
-                matched ? 0xAAFFAA : parent.selectionEditable() ? 0xFFFFFF : 0x999999);
+        graphics.drawString(font, matched ? "✓" : adjustable ? selected ? "☑" : "☐" : "•",
+                left + 6, y + 13, matched ? 0xAAFFAA
+                        : adjustable && parent.selectionEditable() ? 0xFFFFFF : 0x999999);
         graphics.drawString(font, fit(result.required().displayName(), right - textLeft - 8),
                 textLeft, y + 3, 0xFFFFFF);
         Component status = Component.translatable("jane.status."
@@ -306,10 +298,9 @@ final class SyncSelectionScreen extends Screen {
                     case SOURCES_HEADER -> sourcesOpen = !sourcesOpen;
                     case TRUSTED_SOURCE -> parent.toggleSource(false);
                     case SERVER_SOURCE -> parent.toggleSource(true);
-                    case BULK_REQUIRED -> parent.bulkRequiredSelection(
-                            mouseX < (layout.left() + layout.right()) / 2);
                     case MOD -> {
-                        if (row.comparison().status() != Comparison.Status.OK)
+                        if (SelectionScreenRows.adjustable(row.comparison(),
+                                selection.category(row.comparison().required().modId())))
                             parent.toggleSelection(row.comparison());
                     }
                     case NOTE -> { return false; }
@@ -371,11 +362,18 @@ record SelectionScreenLayout(int left, int right, int declarationTop, int declar
 /** Stable manifest order for the secondary selection groups. */
 final class SelectionScreenRows {
     private SelectionScreenRows() { }
+    static boolean adjustable(Comparison.Result result, ClientInstallCategory category) {
+        return result.status() != Comparison.Status.OK
+                && result.status() != Comparison.Status.FILE_ERROR
+                && category == ClientInstallCategory.CLIENT_OPTIONAL;
+    }
     static List<Comparison.Result> pending(List<Comparison.Result> comparisons,
                                            Map<String, ClientInstallCategory> categories,
                                            ClientInstallCategory category) {
         return comparisons.stream().filter(result -> result.status() != Comparison.Status.OK
-                && categories.get(result.required().modId()) == category).toList();
+                && categories.get(result.required().modId()) == category
+                && (category != ClientInstallCategory.CLIENT_OPTIONAL
+                || result.status() != Comparison.Status.FILE_ERROR)).toList();
     }
     static List<Comparison.Result> matched(List<Comparison.Result> comparisons) {
         return comparisons.stream().filter(result -> result.status() == Comparison.Status.OK).toList();

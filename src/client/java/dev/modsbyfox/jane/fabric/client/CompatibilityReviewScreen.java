@@ -3,7 +3,6 @@ package dev.modsbyfox.jane.fabric.client;
 import dev.modsbyfox.jane.core.ClientCompatibilityReport;
 import dev.modsbyfox.jane.core.ClientDisableBatch;
 import dev.modsbyfox.jane.core.ClientDisablePlan;
-import dev.modsbyfox.jane.core.ClientReviewStore;
 import dev.modsbyfox.jane.fabric.JaneLog;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -142,13 +141,16 @@ final class CompatibilityReviewScreen extends Screen {
             return;
         }
         var mod = row.mod();
-        boolean selectable = row.type() == RowType.EXPLICIT;
+        boolean selectable = row.type() == RowType.EXPLICIT && mod.sha512() != null;
         int x = left + (selectable ? 24 : 6);
         if (selectable) graphics.drawString(font, selected.contains(mod.filename()) ? "☑" : "☐",
                 left + 6, y + 7, 0xFFFFFF);
         graphics.drawString(font, fit(mod.displayName(), right - x - 6), x, y + 3, 0xFFFFFF);
-        graphics.drawString(font, fit(mod.version() + (selectable ? "  ·  " + mod.filename() : ""), right - x - 6),
-                x, y + 16, 0xCCCCCC);
+        String detail = mod.version() + (row.type() == RowType.EXPLICIT ? "  ·  " + mod.filename() : "");
+        if (row.type() == RowType.EXPLICIT && mod.sha512() == null)
+            detail += "  ·  " + Component.translatable("jane.direct.extra_unverified").getString();
+        graphics.drawString(font, fit(detail, right - x - 6), x, y + 16,
+                row.type() == RowType.EXPLICIT && mod.sha512() == null ? 0xFF7777 : 0xCCCCCC);
     }
 
     private String fit(String text, int maxWidth) {
@@ -176,6 +178,10 @@ final class CompatibilityReviewScreen extends Screen {
                     case EXPLICIT_HEADER -> explicitOpen = !explicitOpen;
                     case OTHER_HEADER -> otherOpen = !otherOpen;
                     case EXPLICIT -> {
+                        if (row.mod().sha512() == null) {
+                            notice = Component.translatable("jane.compat.local_file_error");
+                            return true;
+                        }
                         if (!selected.add(row.mod().filename())) selected.remove(row.mod().filename());
                     }
                     default -> { return false; }
@@ -197,25 +203,25 @@ final class CompatibilityReviewScreen extends Screen {
         Path gameDir = FabricLoader.getInstance().getGameDir();
         CompletableFuture.supplyAsync(() -> {
             try {
-                ClientDisablePlan plan = ClientDisablePlan.prepare(gameDir, action.serverId(), action.report(), chosen);
+                ClientDisablePlan plan = ClientDisablePlan.prepare(gameDir, action.context().serverId(), action.report(), chosen);
                 ClientDisableBatch.write(gameDir, plan, ProcessHandle.current().pid());
                 return plan;
             } catch (Exception exception) { throw new java.util.concurrent.CompletionException(exception); }
         }).whenComplete((plan, error) -> minecraft.execute(() -> {
             busy = false;
             if (error != null) {
-                LOGGER.error("{}client disable plan failed", JaneLog.client(action.serverId()), error);
+                LOGGER.error("{}client disable plan failed", JaneLog.client(action.context().serverId()), error);
                 notice = Component.translatable("jane.compat.local_file_error");
                 return;
             }
             LOGGER.info("{}playerAction=DISABLE_SELECTED selected={} modIds={} restartRequired=true",
-                    JaneLog.client(action.serverId()), plan.entries().size(),
+                    JaneLog.client(action.context().serverId()), plan.entries().size(),
                     plan.entries().stream().map(ClientDisablePlan.Entry::modId).toList());
             try {
                 WindowsHelperLauncher.launch(minecraft, gameDir, "Jane client disable", "disable.bat",
                         "disabled", plan.serverId(), plan.timestamp());
             } catch (Exception exception) {
-                LOGGER.error("{}client disable helper failed to launch", JaneLog.client(action.serverId()), exception);
+                LOGGER.error("{}client disable helper failed to launch", JaneLog.client(action.context().serverId()), exception);
                 notice = Component.translatable("jane.compat.launch_failed");
             }
         }));
@@ -223,29 +229,10 @@ final class CompatibilityReviewScreen extends Screen {
 
     private void directJoin() {
         if (busy) return;
-        busy = true;
-        notice = Component.translatable("jane.compat.joining");
-        Path gameDir = FabricLoader.getInstance().getGameDir();
-        CompletableFuture.runAsync(() -> {
-            try { ClientReviewStore.acknowledge(gameDir, action.serverId(), action.report().fingerprint()); }
-            catch (Exception exception) { throw new java.util.concurrent.CompletionException(exception); }
-        }).whenComplete((unused, error) -> minecraft.execute(() -> {
-            busy = false;
-            if (error != null) {
-                LOGGER.error("{}could not save client review", JaneLog.client(action.serverId()), error);
-                notice = Component.translatable("jane.compat.save_failed");
-                return;
-            }
-            LOGGER.info("{}required baseline PASS playerAction=DIRECT_JOIN preservedExplicitClient={} "
-                            + "preservedOtherExtra={} fingerprint={}", JaneLog.client(action.serverId()),
-                    action.report().explicitClientMods().size(), action.report().otherExtraMods().size(),
-                    action.report().fingerprint().substring(0, 12));
-            try { ReconnectHelper.reconnect(minecraft, action.target()); }
-            catch (RuntimeException exception) {
-                LOGGER.error("{}automatic reconnect failed", JaneLog.client(action.serverId()), exception);
-                notice = Component.translatable("jane.compat.reconnect_failed");
-            }
-        }));
+        boolean saved = JaneClient.recordEnvironmentAction("USER_SELECT_DIRECT_JOIN",
+                action.context(), action.report());
+        minecraft.setScreen(new DirectJoinConfirmScreen(this, new PendingClientAction.EnvironmentDecision(
+                action.context(), action.report(), action.target(), !saved)));
     }
 
     @Override public void onClose() { minecraft.setScreen(parent); }

@@ -66,13 +66,33 @@ class SyncSelectionScreenTest {
         SyncSelection selection = new SyncSelection(new PendingSyncContext("example.org", manifest, results));
         selection.applyCategories(Map.of("optional", ClientInstallCategory.CLIENT_OPTIONAL));
         assertTrue(selection.isSelected("required"));
-        assertFalse(selection.isSelected("optional"));
+        assertTrue(selection.isSelected("optional"));
         assertEquals(List.of("required"), SelectionScreenRows.pending(results, selection.categories(),
                 ClientInstallCategory.SERVER_REQUIRED).stream()
                 .map(result -> result.required().modId()).toList());
         assertEquals(List.of("optional"), SelectionScreenRows.pending(results, selection.categories(),
                 ClientInstallCategory.CLIENT_OPTIONAL).stream()
                 .map(result -> result.required().modId()).toList());
+    }
+
+    @Test void fileErrorIsNeverListedAsAdjustableOptionalCandidate() {
+        ManifestEntry broken = entry("broken");
+        Comparison.Result result = new Comparison.Result(broken, null, Comparison.Status.FILE_ERROR, null);
+        assertFalse(SelectionScreenRows.adjustable(result, ClientInstallCategory.CLIENT_OPTIONAL));
+        assertTrue(SelectionScreenRows.pending(List.of(result),
+                Map.of("broken", ClientInstallCategory.CLIENT_OPTIONAL),
+                ClientInstallCategory.CLIENT_OPTIONAL).isEmpty());
+    }
+
+    @Test void onlyUnmatchedCandidateRowsCanBeToggled() {
+        ManifestEntry entry = entry("example");
+        Comparison.Result missing = new Comparison.Result(entry, null, Comparison.Status.MISSING, null);
+        Comparison.Result matched = new Comparison.Result(entry,
+                new Comparison.LocalMod("example", entry.version(), Path.of("example.jar")),
+                Comparison.Status.OK, entry.sha512());
+        assertFalse(SelectionScreenRows.adjustable(missing, ClientInstallCategory.SERVER_REQUIRED));
+        assertTrue(SelectionScreenRows.adjustable(missing, ClientInstallCategory.CLIENT_OPTIONAL));
+        assertFalse(SelectionScreenRows.adjustable(matched, ClientInstallCategory.CLIENT_OPTIONAL));
     }
 
     @Test void secondaryScreenAndMainEntryLabelsExistInBothLanguages() throws Exception {
@@ -84,7 +104,7 @@ class SyncSelectionScreenTest {
                         new InputStreamReader(stream, StandardCharsets.UTF_8)).getAsJsonObject();
                 for (String key : List.of("jane.select.screen_title", "jane.select.screen_hint",
                         "jane.sync.select_items", "jane.sync.select_short",
-                        "jane.sync.confirm_move_hint_compact"))
+                        "jane.sync.confirm_move_hint_compact", "jane.select.declaration3"))
                     assertTrue(translations.has(key), language + " missing " + key);
             }
         }

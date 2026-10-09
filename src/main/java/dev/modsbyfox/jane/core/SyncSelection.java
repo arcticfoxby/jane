@@ -58,14 +58,15 @@ public final class SyncSelection {
         }
         for (Map.Entry<String, ClientInstallCategory> entry : resolved.entrySet()) {
             String modId = entry.getKey();
-            ClientInstallCategory category = entry.getValue();
+            // A local file error is never a safe optional installation decision.
+            ClientInstallCategory category = comparisons.get(modId).status() == Comparison.Status.FILE_ERROR
+                    ? ClientInstallCategory.SERVER_REQUIRED : entry.getValue();
             if (categories.put(modId, category) != category) {
                 revision++;
-                if (!choicesFrozen && !touched.contains(modId)) {
-                    boolean changed = category == ClientInstallCategory.CLIENT_OPTIONAL
-                            ? selected.remove(modId) : selected.add(modId);
-                    if (changed) selectionTimestamp = Instant.now();
-                }
+                // Sync is an affirmative action: every unmatched manifest entry starts selected,
+                // including candidates whose client necessity remains uncertain.
+                if (!choicesFrozen && !touched.contains(modId) && selected.add(modId))
+                    selectionTimestamp = Instant.now();
             }
         }
     }

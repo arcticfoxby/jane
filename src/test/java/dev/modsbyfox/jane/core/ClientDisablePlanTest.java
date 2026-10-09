@@ -56,6 +56,15 @@ class ClientDisablePlanTest {
         assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
     }
 
+    @Test void unverifiedExplicitExtraCannotBeDisabled() throws Exception {
+        var sodium = mod("sodium.jar", "sodium");
+        var unverified = new ClientCompatibilityReport.ExtraMod(sodium.modId(), sodium.displayName(),
+                sodium.version(), sodium.filename(), null, sodium.kind(), sodium.jar());
+        assertThrows(java.io.IOException.class,
+                () -> ClientDisablePlan.prepare(game, SERVER, report(unverified), List.of(unverified)));
+        assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
+    }
+
     @Test void unicodeFilenameSurvivesPlanAndSuccessfulMove() throws Exception {
         Assumptions.assumeTrue(isWindows());
         String name = "【优化】sodium-extra.jar";

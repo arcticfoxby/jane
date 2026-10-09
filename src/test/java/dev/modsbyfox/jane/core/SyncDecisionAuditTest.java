@@ -24,7 +24,7 @@ class SyncDecisionAuditTest {
                 "modId", "optional_mod", "requiredVersion", gameDir.resolve("private.jar").toString()));
 
         String content = Files.readString(gameDir.resolve("jane/logs/sync-decisions.log"));
-        assertTrue(content.contains("[Jane 1.1.8-beta][CLIENT] USER_OVERRIDE_CONFIRMED"));
+        assertTrue(content.contains("[Jane 1.1.8.1-beta][CLIENT] USER_OVERRIDE_CONFIRMED"));
         assertTrue(content.contains("USER_OVERRIDE_CONFIRMED manifestDigest=" + "b".repeat(12)));
         assertTrue(content.contains("serverId=" + "a".repeat(12)));
         assertTrue(content.contains("SKIPPED_REQUIRED modId=create reason=USER_DESELECTED requiredVersion=6.0.8.1"));
@@ -35,6 +35,22 @@ class SyncDecisionAuditTest {
         assertFalse(content.contains(gameDir.toString()));
         assertArrayEquals(content.getBytes(StandardCharsets.US_ASCII),
                 Files.readAllBytes(gameDir.resolve("jane/logs/sync-decisions.log")));
+    }
+
+    @Test void directJoinAuditKeepsOnlyShortRequiredHashAndCounts() throws Exception {
+        SyncDecisionAudit.record(gameDir, "ENVIRONMENT_CHECK_COMPLETED", Map.of(
+                "serverId", "a".repeat(64), "required", "85", "matched", "83",
+                "extraClientMods", "4"));
+        SyncDecisionAudit.record(gameDir, "SKIPPED_REQUIRED", Map.of(
+                "serverId", "a".repeat(64), "modId", "create",
+                "requiredVersion", "1.2.3", "comparisonStatus", "MISSING",
+                "requiredHash", "b".repeat(12)));
+        String content = Files.readString(gameDir.resolve("jane/logs/sync-decisions.log"));
+        assertTrue(content.contains("matched=83"));
+        assertTrue(content.contains("extraClientMods=4"));
+        assertTrue(content.contains("comparisonStatus=MISSING"));
+        assertTrue(content.contains("requiredHash=" + "b".repeat(12)));
+        assertFalse(content.contains("b".repeat(128)));
     }
 
     @Test void rotatesBoundedLogs() throws Exception {

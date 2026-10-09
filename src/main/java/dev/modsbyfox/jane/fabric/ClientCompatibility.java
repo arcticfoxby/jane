@@ -28,10 +28,19 @@ public final class ClientCompatibility {
                     : mod.environment() == ModEnvironment.UNIVERSAL
                     ? ClientCompatibilityReport.Kind.OTHER_EXTRA : null;
             if (kind == null) continue;
+            String hash = null;
+            if (kind == ClientCompatibilityReport.Kind.EXPLICIT_CLIENT) {
+                try {
+                    String candidate = hasher.hash(mod.jar());
+                    if (candidate != null && candidate.matches("[0-9a-f]{128}")) hash = candidate;
+                } catch (IOException | IllegalArgumentException exception) {
+                    // An extra JAR cannot invalidate a completed required-file comparison.
+                    // Without a hash it remains visible, but cannot be selected for safe disable.
+                }
+            }
             ClientCompatibilityReport.ExtraMod extra = new ClientCompatibilityReport.ExtraMod(
                     mod.modId(), mod.displayName(), mod.version(), mod.jar().getFileName().toString(),
-                    kind == ClientCompatibilityReport.Kind.EXPLICIT_CLIENT ? hasher.hash(mod.jar()) : null,
-                    kind, mod.jar());
+                    hash, kind, mod.jar());
             if (kind == ClientCompatibilityReport.Kind.EXPLICIT_CLIENT) explicit.add(extra);
             else other.add(extra);
         }

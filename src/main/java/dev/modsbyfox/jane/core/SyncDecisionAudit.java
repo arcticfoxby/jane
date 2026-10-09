@@ -28,7 +28,9 @@ public final class SyncDecisionAudit {
             "serverId", "manifestDigest", "modId", "requiredVersion", "reason", "required",
             "missing", "versionMismatch", "fileError", "skippedRequired", "selectedRequired",
             "selectedOptional", "defaultOptional", "selectedCount", "downloadCount",
-            "requiredBaseline", "joinAction", "selectionTimestamp", "status", "result");
+            "requiredBaseline", "joinAction", "selectionTimestamp", "status", "result",
+            "matched", "extraClientMods", "preservedExtras", "hashMismatch",
+            "comparisonStatus", "requiredHash");
 
     private SyncDecisionAudit() { }
 
@@ -62,7 +64,7 @@ public final class SyncDecisionAudit {
             sorted.put(key, field.getValue());
         }
         StringBuilder line = new StringBuilder(Instant.now().toString())
-                .append(" [Jane 1.1.8-beta][CLIENT] ").append(event);
+                .append(" [Jane 1.1.8.1-beta][CLIENT] ").append(event);
         for (var field : sorted.entrySet()) {
             String key = field.getKey();
             line.append(' ').append(key).append('=').append(safeValue(key, field.getValue()));
@@ -77,10 +79,14 @@ public final class SyncDecisionAudit {
                     : "[REDACTED]";
         }
         if (key.equals("modId")) return MOD_ID.matcher(value).matches() ? value : "[REDACTED]";
+        if (key.equals("requiredHash"))
+            return value.matches("[0-9a-fA-F]{12}") ? value.toLowerCase(java.util.Locale.ROOT) : "[REDACTED]";
         if (key.equals("required") || key.equals("missing") || key.equals("versionMismatch")
                 || key.equals("fileError") || key.equals("skippedRequired") || key.equals("selectedRequired")
                 || key.equals("selectedOptional") || key.equals("defaultOptional")
-                || key.equals("selectedCount") || key.equals("downloadCount")) {
+                || key.equals("selectedCount") || key.equals("downloadCount") || key.equals("matched")
+                || key.equals("extraClientMods") || key.equals("preservedExtras")
+                || key.equals("hashMismatch")) {
             return NUMBER.matcher(value).matches() ? value : "[REDACTED]";
         }
         if (value.length() > 96 || !value.matches("[A-Za-z0-9._+:-]{1,96}")) return "[REDACTED]";

@@ -36,17 +36,18 @@ class SyncSelectionTest {
         assertTrue(choice.deselectedRequiredModIds().isEmpty());
     }
 
-    @Test void optionalDefaultsOffAndPlayerCanSelectItWhileRequiredCanBeSkipped() {
-        SyncSelection choice = new SyncSelection(context(), Map.of("optional", ClientInstallCategory.CLIENT_OPTIONAL));
+    @Test void uncertainCandidateDefaultsOnAndCanBeDeselectedWithoutChangingRequiredComparison() {
+        PendingSyncContext context = context();
+        SyncSelection choice = new SyncSelection(context, Map.of("optional", ClientInstallCategory.CLIENT_OPTIONAL));
         assertTrue(choice.isSelected("required"));
-        assertFalse(choice.isSelected("optional"));
-        assertEquals(Set.of("optional"), choice.defaultOptionalExclusionModIds());
-        assertEquals(Set.of("required"), choice.selectedUnmatchedModIds());
+        assertTrue(choice.isSelected("optional"));
+        assertTrue(choice.defaultOptionalExclusionModIds().isEmpty());
+        assertEquals(Set.of("required", "optional"), choice.selectedUnmatchedModIds());
 
-        choice.setSelected("required", false);
-        choice.setSelected("optional", true);
-        assertEquals(Set.of("required"), choice.deselectedRequiredModIds());
-        assertEquals(Set.of("optional"), choice.selectedUnmatchedModIds());
+        choice.setSelected("optional", false);
+        assertTrue(choice.deselectedRequiredModIds().isEmpty());
+        assertEquals(Set.of("required"), choice.selectedUnmatchedModIds());
+        assertEquals(Comparison.Status.MISSING, context.results().get(1).status());
         assertTrue(choice.defaultOptionalExclusionModIds().isEmpty());
     }
 
@@ -56,10 +57,10 @@ class SyncSelectionTest {
         choice.applyCategories(Map.of("required", ClientInstallCategory.CLIENT_OPTIONAL,
                 "optional", ClientInstallCategory.CLIENT_OPTIONAL));
         assertFalse(choice.isSelected("required"));
-        assertFalse(choice.isSelected("optional"));
-        choice.setSelected("optional", true);
-        choice.applyCategories(Map.of("optional", ClientInstallCategory.SERVER_REQUIRED));
         assertTrue(choice.isSelected("optional"));
+        choice.setSelected("optional", false);
+        choice.applyCategories(Map.of("optional", ClientInstallCategory.SERVER_REQUIRED));
+        assertFalse(choice.isSelected("optional"));
         assertThrows(IllegalArgumentException.class, () -> choice.applyCategories(Map.of("unknown", ClientInstallCategory.CLIENT_OPTIONAL)));
     }
 
@@ -93,5 +94,15 @@ class SyncSelectionTest {
                 ClientInstallCategory.fromModrinthEvidence(true, "required"));
         assertEquals(ClientInstallCategory.SERVER_REQUIRED,
                 ClientInstallCategory.fromModrinthEvidence(true, null));
+    }
+
+    @Test void localFileErrorCannotBecomeOptionalInstallationCandidate() {
+        ManifestEntry error = new ManifestEntry("broken", "Broken", "1", 100, HASH);
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL, List.of(error));
+        PendingSyncContext unsafe = new PendingSyncContext("example.org", manifest,
+                List.of(new Comparison.Result(error, null, Comparison.Status.FILE_ERROR, null)));
+        SyncSelection choice = new SyncSelection(unsafe, Map.of("broken", ClientInstallCategory.CLIENT_OPTIONAL));
+        assertEquals(ClientInstallCategory.SERVER_REQUIRED, choice.category("broken"));
+        assertTrue(choice.isSelected("broken"));
     }
 }

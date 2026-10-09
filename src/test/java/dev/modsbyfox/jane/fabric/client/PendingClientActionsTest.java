@@ -3,6 +3,7 @@ package dev.modsbyfox.jane.fabric.client;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.modsbyfox.jane.core.Comparison;
+import dev.modsbyfox.jane.core.ClientCompatibilityReport;
 import dev.modsbyfox.jane.core.ManifestEntry;
 import dev.modsbyfox.jane.core.PendingSyncContext;
 import dev.modsbyfox.jane.core.RequiredManifest;
@@ -59,6 +60,27 @@ class PendingClientActionsTest {
         assertFalse(actions.takePassed());
         actions.begin(connection);
         assertTrue(actions.replace(connection, action(sync)));
+        actions.begin(new Object());
+        assertNull(actions.take());
+    }
+
+    @Test void decisionCarriesComparisonAcrossDisconnectButNotIntoAnotherConnection() {
+        PendingClientActions actions = new PendingClientActions();
+        PendingSyncContext first = context("first.example.com");
+        var report = new ClientCompatibilityReport(List.of(), List.of(),
+                ClientCompatibilityReport.fingerprint(List.of()));
+        Object login = new Object();
+        actions.begin(login);
+        assertTrue(actions.replace(login,
+                new PendingClientAction.EnvironmentDecision(first, report, null, false)));
+        var pending = assertInstanceOf(PendingClientAction.EnvironmentDecision.class, actions.take());
+        assertSame(first, pending.context());
+        assertSame(report, pending.report());
+        assertNull(actions.take());
+
+        actions.begin(login);
+        assertTrue(actions.replace(login,
+                new PendingClientAction.EnvironmentDecision(first, report, null, false)));
         actions.begin(new Object());
         assertNull(actions.take());
     }

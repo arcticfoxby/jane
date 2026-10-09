@@ -46,6 +46,8 @@ final class PendingClientActions {
 
     synchronized void clearIfContext(dev.modsbyfox.jane.core.PendingSyncContext context) {
         if (action instanceof PendingClientAction.RequiredSync sync && sync.context() == context) clear();
+        if (action instanceof PendingClientAction.EnvironmentDecision decision
+                && decision.context() == context) clear();
     }
 
     private void clear() {

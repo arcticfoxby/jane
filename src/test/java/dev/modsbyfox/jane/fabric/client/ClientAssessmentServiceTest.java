@@ -32,15 +32,19 @@ class ClientAssessmentServiceTest {
         return jar;
     }
 
-    @Test void requiredMismatchTakesPriorityOverCompatibilityReview() throws Exception {
+    @Test void missingRequiredStillReportsBothKindsOfExtraMod() throws Exception {
         mod("sodium.jar", "sodium", "client");
+        mod("clientlib.jar", "clientlib", "*");
         RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
                 List.of(new ManifestEntry("create", "Create", "1", 10, "a".repeat(128))));
         ClientAssessment assessment = ClientAssessmentService.assess(game, manifest);
         assertFalse(assessment.requiredPassed());
         assertEquals(Comparison.Status.MISSING, assessment.requiredResults().get(0).status());
-        assertNull(assessment.compatibility(), "Review must wait until required sync and restart");
-        assertEquals(1, assessment.discovery().all().size());
+        assertEquals(List.of("sodium"), assessment.compatibility().explicitClientMods().stream()
+                .map(extra -> extra.modId()).toList());
+        assertEquals(List.of("clientlib"), assessment.compatibility().otherExtraMods().stream()
+                .map(extra -> extra.modId()).toList());
+        assertEquals(2, assessment.discovery().all().size());
     }
 
     @Test void passUsesSameDiscoveryForRequiredAndExtraMods() throws Exception {
@@ -76,6 +80,24 @@ class ClientAssessmentServiceTest {
         });
         assertFalse(fails.requiredPassed());
         assertEquals(Comparison.Status.FILE_ERROR, fails.requiredResults().get(0).status());
-        assertNull(fails.compatibility());
+        assertEquals(List.of("sodium"), fails.compatibility().explicitClientMods().stream()
+                .map(extra -> extra.modId()).toList());
+    }
+
+    @Test void unreadableExtraHashDoesNotTurnRequiredPassIntoFileError() throws Exception {
+        Path required = mod("create.jar", "create", "*");
+        Path extra = mod("sodium.jar", "sodium", "client");
+        RequiredManifest manifest = new RequiredManifest(RequiredManifest.PROTOCOL,
+                List.of(new ManifestEntry("create", "Create", "1", Files.size(required), Hashing.sha512(required))));
+        ClientAssessment assessment = ClientAssessmentService.assess(manifest, ClientPhysicalDiscovery.scan(game),
+                path -> {
+                    if (path.equals(extra)) throw new java.io.IOException("extra hash unreadable");
+                    return Hashing.sha512(path);
+                });
+        assertTrue(assessment.requiredPassed());
+        assertEquals(Comparison.Status.OK, assessment.requiredResults().get(0).status());
+        assertEquals(List.of("sodium"), assessment.compatibility().explicitClientMods().stream()
+                .map(mod -> mod.modId()).toList());
+        assertNull(assessment.compatibility().explicitClientMods().get(0).sha512());
     }
 }

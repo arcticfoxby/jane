@@ -17,7 +17,6 @@ import dev.modsbyfox.jane.fabric.JaneLog;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -48,14 +47,12 @@ final class SyncScreen extends Screen {
     private boolean serverSourceEnabled = SyncSelectionLayout.DEFAULT_SERVER_SOURCE;
     private boolean downloadPaused;
     private DownloadCoordinator downloadCoordinator;
-    private final Set<String> auditedOptionals = new HashSet<>();
     private UpdatePlan ready;
     private Component notice;
     private Button downloadButton;
     private Button retryButton;
     private Button cancelTransferButton;
     private Button finishButton;
-    private Button skipButton;
     private Button detailsButton;
     private Button selectionButton;
     private Button cancelButton;
@@ -86,8 +83,6 @@ final class SyncScreen extends Screen {
         cancelTransferButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.cancel_transfer"),
                 button -> cancelTransfer()).bounds(x, layout.mainY(), buttonWidth, 20).build());
         finishButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.finish"), button -> launch())
-                .bounds(x, layout.mainY(), buttonWidth, 20).build());
-        skipButton = addRenderableWidget(Button.builder(Component.translatable("jane.select.try_join"), button -> openRisk())
                 .bounds(x, layout.mainY(), buttonWidth, 20).build());
         selectionButton = addRenderableWidget(Button.builder(Component.translatable("jane.sync.select_items"), button ->
                 minecraft.setScreen(new SyncSelectionScreen(this, session, selection)))
@@ -125,7 +120,6 @@ final class SyncScreen extends Screen {
                 notice = Component.translatable("jane.sync.failed");
             } else {
                 resolved = true;
-                auditDefaultOptionals();
                 JaneSyncSession.Snapshot snapshot = session.snapshot();
                 notice = snapshot.resolution().count(ResolutionPlan.Availability.ALREADY_PRESENT)
                         == snapshot.resolution().items().size()
@@ -151,7 +145,6 @@ final class SyncScreen extends Screen {
                 LOGGER.error("{}lookup retry failed", JaneLog.client(session.context().serverId()), error);
                 notice = Component.translatable("jane.sync.failed");
             } else {
-                auditDefaultOptionals();
                 notice = noticeFor(session.snapshot());
             }
         }));
@@ -569,7 +562,7 @@ final class SyncScreen extends Screen {
 
     private void updateButtons(JaneSyncSession.Snapshot snapshot) {
         downloadButton.visible = retryButton.visible = false;
-        cancelTransferButton.visible = finishButton.visible = skipButton.visible = false;
+        cancelTransferButton.visible = finishButton.visible = false;
         selectionButton.visible = true;
         selectionButton.active = !launching && !sessionCancelled.get();
         if (launching) return;
@@ -589,7 +582,6 @@ final class SyncScreen extends Screen {
                     && (trustedSourceEnabled && snapshot.hasWaiting(ResolutionPlan.TransferGroup.TRUSTED)
                     || usableServerSource() && (snapshot.hasWaiting(ResolutionPlan.TransferGroup.TRUSTED)
                     || snapshot.hasWaiting(ResolutionPlan.TransferGroup.SERVER_ONLY)));
-            if (canAttemptOverride()) primary = skipButton;
             boolean lookupFailed = snapshot.resolution() != null
                     && snapshot.resolution().count(ResolutionPlan.Availability.LOOKUP_FAILED) > 0;
             if (resolved && lookupFailed) secondary = retryButton;
@@ -655,35 +647,18 @@ final class SyncScreen extends Screen {
     }
 
     void toggleSelection(Comparison.Result result) {
-        if (result.status() == Comparison.Status.OK) return;
+        if (result.status() == Comparison.Status.OK || result.status() == Comparison.Status.FILE_ERROR) return;
         if (!selectionEditable()) return;
         String modId = result.required().modId();
+        if (selection.category(modId) != ClientInstallCategory.CLIENT_OPTIONAL) return;
         boolean wasSelected = selection.isSelected(modId);
         selection.setSelected(modId, !wasSelected);
         if (!session.selectModIds(selection.selectedModIds())) return;
-        ClientInstallCategory category = selection.category(modId);
-        String event = result.status() == Comparison.Status.OK ? "USER_TOGGLE_MATCHED"
-                : category == ClientInstallCategory.CLIENT_OPTIONAL
-                ? (wasSelected ? "USER_DESELECT_OPTIONAL" : "USER_SELECT_OPTIONAL")
-                : (wasSelected ? "USER_DESELECT_REQUIRED" : "USER_SELECT_REQUIRED");
+        String event = wasSelected ? "USER_DESELECT_OPTIONAL" : "USER_SELECT_OPTIONAL";
         audit(event, Map.of("modId", modId, "requiredVersion", result.required().version(),
                 "status", result.status().name(), "selectedCount", Integer.toString(selection.selectedUnmatchedModIds().size())));
         notice = Component.translatable("jane.select.summary", selection.selectedUnmatchedModIds().size(),
                 skippedItems().size());
-    }
-
-    void bulkRequiredSelection(boolean select) {
-        if (!selectionEditable()) return;
-        for (Comparison.Result result : session.context().results()) {
-            if (result.status() != Comparison.Status.OK
-                    && selection.category(result.required().modId()) == ClientInstallCategory.SERVER_REQUIRED
-                    && selection.isSelected(result.required().modId()) != select) toggleSelection(result);
-        }
-    }
-
-    private void openRisk() {
-        if (!canAttemptOverride()) return;
-        minecraft.setScreen(new SyncRiskConfirmScreen(this, session.context(), selection));
     }
 
     boolean canConfirmOverride() { return canAttemptOverride(); }
@@ -717,15 +692,6 @@ final class SyncScreen extends Screen {
         boolean started = JaneClient.confirmRequiredOverride(minecraft, session.context(), reconnectTarget, selection);
         if (!started) notice = Component.translatable("jane.select.reconnect_failed");
         return started;
-    }
-
-    private void auditDefaultOptionals() {
-        for (String modId : selection.defaultOptionalExclusionModIds()) {
-            if (!auditedOptionals.add(modId)) continue;
-            audit("DEFAULT_OPTIONAL_EXCLUSION", Map.of("modId", modId,
-                    "requiredVersion", session.context().manifest().entries().stream()
-                            .filter(entry -> entry.modId().equals(modId)).findFirst().orElseThrow().version()));
-        }
     }
 
     private boolean audit(String event, Map<String, String> fields) {
