@@ -24,7 +24,7 @@ class SyncDecisionAuditTest {
                 "modId", "optional_mod", "requiredVersion", gameDir.resolve("private.jar").toString()));
 
         String content = Files.readString(gameDir.resolve("jane/logs/sync-decisions.log"));
-        assertTrue(content.contains("[Jane 1.1.8.1-beta][CLIENT] USER_OVERRIDE_CONFIRMED"));
+        assertTrue(content.contains("[Jane 1.1.8.2-beta][CLIENT] USER_OVERRIDE_CONFIRMED"));
         assertTrue(content.contains("USER_OVERRIDE_CONFIRMED manifestDigest=" + "b".repeat(12)));
         assertTrue(content.contains("serverId=" + "a".repeat(12)));
         assertTrue(content.contains("SKIPPED_REQUIRED modId=create reason=USER_DESELECTED requiredVersion=6.0.8.1"));

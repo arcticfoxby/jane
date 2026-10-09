@@ -64,7 +64,7 @@ public final class SyncDecisionAudit {
             sorted.put(key, field.getValue());
         }
         StringBuilder line = new StringBuilder(Instant.now().toString())
-                .append(" [Jane 1.1.8.1-beta][CLIENT] ").append(event);
+                .append(" [Jane 1.1.8.2-beta][CLIENT] ").append(event);
         for (var field : sorted.entrySet()) {
             String key = field.getKey();
             line.append(' ').append(key).append('=').append(safeValue(key, field.getValue()));

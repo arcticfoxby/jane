@@ -1,8 +1,8 @@
 ---
 
-# 简（Jane）1.1.8.1 Beta
+# 简（Jane）1.1.8.2 Beta
 
-Jane targets Minecraft Java Edition 1.20.1, Fabric, and Java 17. Install a compatible Jane version on both client and server. Build with `gradlew.bat build`; use `build/libs/jane-1.1.8.1-beta.jar` rather than a development JAR.
+Jane targets Minecraft Java Edition 1.20.1, Fabric, and Java 17. Install a compatible Jane version on both client and server. Build with `gradlew.bat build`; use `build/libs/jane-1.1.8.2-beta.jar` rather than a development JAR.
 
 ## Connection decision
 
@@ -26,4 +26,4 @@ When a player confirms joining without installing an unsatisfied required file, 
 
 ## Protocol Compatibility
 
-Jane V1.1.8.1 Beta uses **Protocol 4**. Client and server Jane versions must be compatible; Protocol 3 is not silently downgraded. Protocol 4 distinguishes `EXACT_PASS`, `ACTION_REQUIRED`, `PROTOCOL_ERROR`, and `USER_OVERRIDE` without sending a client's private mod inventory.
+Jane V1.1.8.2 Beta uses **Protocol 4**. Client and server Jane versions must be compatible; Protocol 3 is not silently downgraded. Protocol 4 distinguishes `EXACT_PASS`, `ACTION_REQUIRED`, `PROTOCOL_ERROR`, and `USER_OVERRIDE` without sending a client's private mod inventory.

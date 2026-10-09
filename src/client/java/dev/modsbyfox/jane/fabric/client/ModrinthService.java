@@ -101,7 +101,7 @@ final class ModrinthService {
 
     private Optional<JsonObject> fetchJson(URI uri) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.1.8.1-beta")
+                .header("User-Agent", "modsbyfox/Jane/1.1.8.2-beta")
                 .header("Accept", "application/json").GET().build();
         HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
@@ -120,7 +120,7 @@ final class ModrinthService {
                   BooleanSupplier cancelled, LongConsumer progress) throws IOException, InterruptedException {
         ModrinthDownload.download(source, target, destination, cancelled, progress, uri -> {
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(5))
-                    .header("User-Agent", "modsbyfox/Jane/1.1.8.1-beta").GET().build();
+                    .header("User-Agent", "modsbyfox/Jane/1.1.8.2-beta").GET().build();
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             return new ModrinthDownload.Response(response.statusCode(), response.headers().allValues("Location"), response.body());
         });

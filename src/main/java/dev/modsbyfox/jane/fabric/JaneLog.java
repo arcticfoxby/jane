@@ -2,7 +2,7 @@ package dev.modsbyfox.jane.fabric;
 
 /** Prefixes Jane events written through Minecraft/Fabric's normal logger. */
 public final class JaneLog {
-    private static final String VERSION = "1.1.8.1-beta";
+    private static final String VERSION = "1.1.8.2-beta";
     private JaneLog() { }
     public static String server() { return "[Jane " + VERSION + "][SERVER] "; }
     public static String clientStartup() { return "[Jane " + VERSION + "][CLIENT] "; }
