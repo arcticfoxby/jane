@@ -20,6 +20,16 @@ record ClassicSyncLayout(boolean compact, boolean tiny, int mainX, int mainWidth
     int retryY() { return mainY - 48; }
     int compactFooterX(int slot) { return 8 + slot * (footerWidth + 4); }
 
+    /** Extra controls use the space normally occupied by the disabled selection action. */
+    boolean quickCancelInFooter() { return tiny; }
+    int quickItemY() { return tiny ? 17 : compact || mainY < 228 ? 57 : 106; }
+    int quickBarY() { return tiny ? 30 : compact || mainY < 228 ? 75 : 120; }
+    int quickRouteY() { return tiny ? 41 : compact || mainY < 228 ? 88 : 133; }
+    int quickHeaderY() { return tiny ? 53 : compact || mainY < 228 ? 103 : Math.max(145, mainY - 58); }
+    int quickButtonsY() { return quickHeaderY() + 14; }
+    int quickButtonWidth() { return (mainWidth - 4) / 2; }
+    int quickButtonX(int slot) { return mainX + slot * (quickButtonWidth() + 4); }
+
     int actionTop(boolean retryVisible) {
         return compact ? mainY : retryVisible ? retryY() : selectionY();
     }

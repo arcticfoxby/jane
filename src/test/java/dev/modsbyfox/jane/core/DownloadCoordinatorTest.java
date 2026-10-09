@@ -107,6 +107,28 @@ class DownloadCoordinatorTest {
         assertThrows(IllegalStateException.class, coordinator::confirmServerOnly);
     }
 
+    @Test void aNewCoordinatorAfterRouteSwitchStillRequiresServerOnlyConfirmation() {
+        JaneSyncSession session = session(true, ResolutionPlan.Availability.TRUSTED_AVAILABLE,
+                ResolutionPlan.Availability.SERVER_ONLY);
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        session.update("mod0", JaneSyncSession.RuntimeState.READY, 100);
+        session.finishTransfer(false, null);
+        DownloadCoordinator beforeSwitch = new DownloadCoordinator(false, true, true);
+        assertEquals(DownloadCoordinator.Action.SERVER_ONLY_CONFIRM, beforeSwitch.next(session.snapshot()));
+        beforeSwitch.confirmServerOnly();
+        assertEquals(DownloadCoordinator.Action.SERVER_ONLY, beforeSwitch.next(session.snapshot()));
+        assertTrue(session.startServerOnlyConfirmed());
+        session.update("mod1", JaneSyncSession.RuntimeState.DOWNLOADING, 40);
+        session.finishTransfer(true, null);
+
+        DownloadCoordinator afterSwitch = new DownloadCoordinator(false, true, true);
+        assertEquals(DownloadCoordinator.Action.SERVER_ONLY_CONFIRM, afterSwitch.next(session.snapshot()));
+        assertEquals(DownloadCoordinator.Action.INCOMPLETE, afterSwitch.next(session.snapshot()));
+        assertThrows(IllegalStateException.class, () ->
+                new DownloadCoordinator(false, true, true).confirmServerOnly());
+    }
+
     @Test void lookupFailureRemainsIncompleteAndCannotBecomePending() {
         JaneSyncSession session = session(true, ResolutionPlan.Availability.LOOKUP_FAILED);
         DownloadCoordinator coordinator = new DownloadCoordinator(true, true, true);

@@ -33,6 +33,7 @@ final class CompatibilityReviewScreen extends Screen {
     private boolean otherOpen;
     private boolean busy;
     private int scroll;
+    private int declarationScroll;
     private Component notice;
     private Button disableButton;
     private Button directButton;
@@ -55,8 +56,25 @@ final class CompatibilityReviewScreen extends Screen {
                 .bounds(x, height - 28, buttonWidth, 20).build());
     }
 
-    private int top() { return 45; }
-    private int bottom() { return Math.max(top() + 12, height - 86); }
+    private int left() { return Math.max(12, width / 2 - Math.min(260, (width - 32) / 2)); }
+    private int right() { return width - left() - 8; }
+    private int textWidth() { return Math.max(100, right() - left() - 10); }
+    private CompatibilityReviewLayout layout() {
+        return CompatibilityReviewLayout.forSize(height, contentHeight(declarationRows()));
+    }
+    private int top() { return layout().listTop(); }
+    private int bottom() { return layout().listBottom(); }
+
+    /** Fixed technical boundary: its coordinates never depend on the Mod-list scroll offset. */
+    private List<Row> declarationRows() {
+        List<Row> result = new ArrayList<>();
+        for (int i = 1; i <= 4; i++) {
+            for (FormattedCharSequence line : font.split(Component.translatable("jane.compat.boundary" + i), textWidth()))
+                result.add(new Row(RowType.TEXT, font.lineHeight, line, null));
+            if (i < 4) result.add(new Row(RowType.TEXT, 2, null, null));
+        }
+        return result;
+    }
 
     private List<Row> rows() {
         List<Row> result = new ArrayList<>();
@@ -72,11 +90,6 @@ final class CompatibilityReviewScreen extends Screen {
             addText(result, "jane.compat.other_warning");
             for (var mod : action.report().otherExtraMods()) result.add(new Row(RowType.OTHER, 27, null, mod));
         }
-        result.add(new Row(RowType.TEXT, 8, null, null));
-        addText(result, "jane.compat.boundary1");
-        addText(result, "jane.compat.boundary2");
-        addText(result, "jane.compat.boundary3");
-        addText(result, "jane.compat.boundary4");
         result.add(new Row(RowType.TEXT, 6, null, null));
         addText(result, "jane.compat.disable_hint");
         addText(result, "jane.compat.dependency_warning");
@@ -84,7 +97,7 @@ final class CompatibilityReviewScreen extends Screen {
     }
 
     private void addText(List<Row> rows, String key) {
-        for (FormattedCharSequence line : font.split(Component.translatable(key), Math.max(100, width - 44)))
+        for (FormattedCharSequence line : font.split(Component.translatable(key), textWidth()))
             rows.add(new Row(RowType.TEXT, 12, line, null));
     }
 
@@ -99,21 +112,43 @@ final class CompatibilityReviewScreen extends Screen {
         directButton.active = !busy;
         graphics.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.translatable("jane.compat.required_pass"), width / 2, 25, 0xAAFFAA);
-        List<Row> rows = rows();
-        clamp(rows);
-        int left = Math.max(12, width / 2 - Math.min(260, (width - 32) / 2));
-        int right = width - left - 8;
-        graphics.enableScissor(left, top(), right + 8, bottom());
-        int y = top() - scroll;
-        for (Row row : rows) {
-            if (y + row.height() > top() && y < bottom()) drawRow(graphics, row, left, right, y, mouseX, mouseY);
-            y += row.height();
+        CompatibilityReviewLayout layout = layout();
+        declarationScroll = Math.max(0, Math.min(declarationScroll, layout.declarationScrollLimit()));
+        int declarationY = layout.declarationTop() - declarationScroll;
+        int left = left();
+        int right = right();
+        graphics.enableScissor(left, layout.declarationTop(), right + 8, layout.declarationBottom());
+        for (Row line : declarationRows()) {
+            if (line.text() != null && declarationY + line.height() > layout.declarationTop()
+                    && declarationY < layout.declarationBottom())
+                graphics.drawString(font, line.text(), left + 5, declarationY, 0xBBBBBB);
+            declarationY += line.height();
         }
         graphics.disableScissor();
+        if (layout.declarationScrollLimit() > 0) {
+            int view = layout.declarationBottom() - layout.declarationTop();
+            int thumb = Math.max(8, view * view / layout.declarationContentHeight());
+            int thumbY = layout.declarationTop() + declarationScroll * (view - thumb)
+                    / layout.declarationScrollLimit();
+            graphics.fill(right + 3, layout.declarationTop(), right + 7, layout.declarationBottom(), 0xFF444444);
+            graphics.fill(right + 3, thumbY, right + 7, thumbY + thumb, 0xFFAAAAAA);
+        }
+        graphics.fill(left, layout.declarationBottom() + 1, right, layout.declarationBottom() + 2, 0xFF666666);
+        List<Row> rows = rows();
+        clamp(rows);
+        if (top() < bottom()) {
+            graphics.enableScissor(left, top(), right + 8, bottom());
+            int y = top() - scroll;
+            for (Row row : rows) {
+                if (y + row.height() > top() && y < bottom()) drawRow(graphics, row, left, right, y, mouseX, mouseY);
+                y += row.height();
+            }
+            graphics.disableScissor();
+        }
         int total = contentHeight(rows);
         int view = bottom() - top();
-        if (total > view) {
-            int thumb = Math.max(12, view * view / total);
+        if (view > 0 && total > view) {
+            int thumb = Math.min(view, Math.max(12, view * view / total));
             int thumbY = top() + scroll * (view - thumb) / (total - view);
             graphics.fill(right + 3, top(), right + 7, bottom(), 0xFF444444);
             graphics.fill(right + 3, thumbY, right + 7, thumbY + thumb, 0xFFAAAAAA);
@@ -159,6 +194,12 @@ final class CompatibilityReviewScreen extends Screen {
     }
 
     @Override public boolean mouseScrolled(double x, double y, double amount) {
+        CompatibilityReviewLayout layout = layout();
+        if (y >= layout.declarationTop() && y < layout.declarationBottom()) {
+            declarationScroll -= (int) Math.round(amount * 18);
+            declarationScroll = Math.max(0, Math.min(declarationScroll, layout.declarationScrollLimit()));
+            return true;
+        }
         if (y < top() || y >= bottom()) return super.mouseScrolled(x, y, amount);
         scroll -= (int) Math.round(amount * 24);
         clamp(rows());
@@ -168,8 +209,8 @@ final class CompatibilityReviewScreen extends Screen {
     @Override public boolean mouseClicked(double x, double y, int button) {
         if (super.mouseClicked(x, y, button)) return true;
         if (button != 0 || y < top() || y >= bottom() || busy) return false;
-        int left = Math.max(12, width / 2 - Math.min(260, (width - 32) / 2));
-        int right = width - left - 8;
+        int left = left();
+        int right = right();
         if (x < left || x >= right) return false;
         int at = top() - scroll;
         for (Row row : rows()) {

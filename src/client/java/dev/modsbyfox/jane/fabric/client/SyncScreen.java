@@ -23,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -37,6 +38,7 @@ final class SyncScreen extends Screen {
     private final SyncSelection selection;
     private final ReconnectTarget reconnectTarget;
     private final AtomicBoolean sessionCancelled = new AtomicBoolean();
+    private final DownloadRouteSwitch routeSwitch = new DownloadRouteSwitch();
     private volatile AtomicBoolean activeTransferCancel;
     private volatile StagingWorkspace workspace;
     private boolean retryingLookup;
@@ -56,6 +58,8 @@ final class SyncScreen extends Screen {
     private Button detailsButton;
     private Button selectionButton;
     private Button cancelButton;
+    private Button quickTrustedButton;
+    private Button quickServerButton;
 
     SyncScreen(Screen parent, PendingSyncContext context, ReconnectTarget reconnectTarget) {
         this(parent, context, reconnectTarget, false);
@@ -102,6 +106,14 @@ final class SyncScreen extends Screen {
             selectionButton.setY(layout.footerY());
             selectionButton.setWidth(footerWidth);
         }
+        quickTrustedButton = addRenderableWidget(Button.builder(
+                Component.translatable("jane.sync.quick_trusted"), button ->
+                        requestRouteSwitch(ResolutionPlan.TransferRoute.TRUSTED_SOURCE))
+                .bounds(layout.quickButtonX(0), layout.quickButtonsY(), layout.quickButtonWidth(), 20).build());
+        quickServerButton = addRenderableWidget(Button.builder(
+                Component.translatable("jane.sync.quick_server"), button ->
+                        requestRouteSwitch(ResolutionPlan.TransferRoute.CURRENT_SERVER))
+                .bounds(layout.quickButtonX(1), layout.quickButtonsY(), layout.quickButtonWidth(), 20).build());
         // Minecraft calls init again when returning from Details or a confirmation screen.
         // beginResolution is a session-level one-shot guard, so no second lookup is launched.
         beginResolve();
@@ -228,6 +240,46 @@ final class SyncScreen extends Screen {
                 + snapshot.queue(ResolutionPlan.TransferGroup.SERVER_ONLY).size();
     }
 
+    private long remainingTransferCount(JaneSyncSession.Snapshot snapshot) {
+        return snapshot.items().stream().filter(item ->
+                snapshot.selectedModIds().contains(item.item().comparison().required().modId())
+                        && item.state() != JaneSyncSession.RuntimeState.READY
+                        && (item.item().availability() == ResolutionPlan.Availability.TRUSTED_AVAILABLE
+                        || item.item().availability() == ResolutionPlan.Availability.SERVER_ONLY)).count();
+    }
+
+    private void requestRouteSwitch(ResolutionPlan.TransferRoute target) {
+        JaneSyncSession.Snapshot snapshot = session.snapshot();
+        AtomicBoolean token = activeTransferCancel;
+        if (sessionCancelled.get() || launching || ready != null || token == null || token.get()
+                || !routeSwitch.request(snapshot, target, session.context().provider() != null,
+                token.get())) return;
+        token.set(true);
+        logRouteSwitch("USER_REQUEST_ROUTE_SWITCH", snapshot.activeRoute(), target, snapshot, null);
+        notice = Component.translatable("jane.sync.quick_switching");
+    }
+
+    private void logRouteSwitch(String event, ResolutionPlan.TransferRoute from,
+                                ResolutionPlan.TransferRoute to, JaneSyncSession.Snapshot snapshot,
+                                String failure) {
+        LOGGER.info("{}{} from={} to={} ready={} remaining={} reason={}",
+                JaneLog.client(session.context().serverId()), event, from, to,
+                snapshot.readyCount(), remainingTransferCount(snapshot), failure == null ? "none" : failure);
+        Map<String, String> fields = new HashMap<>();
+        fields.put("from", from == null ? "NONE" : from.name());
+        fields.put("to", to == null ? "NONE" : to.name());
+        fields.put("readyCount", Long.toString(snapshot.readyCount()));
+        fields.put("remainingCount", Long.toString(remainingTransferCount(snapshot)));
+        if (failure != null) fields.put("reason", failure);
+        audit(event, fields);
+    }
+
+    private static boolean interrupted(Throwable error) {
+        while (error instanceof java.util.concurrent.CompletionException && error.getCause() != null)
+            error = error.getCause();
+        return error instanceof InterruptedException || error instanceof java.util.concurrent.CancellationException;
+    }
+
     private void start(ResolutionPlan.TransferGroup group, ResolutionPlan.TransferRoute route, boolean confirmed) {
         if (sessionCancelled.get() || retryingLookup) return;
         JaneSyncSession.Snapshot before = session.snapshot();
@@ -259,6 +311,49 @@ final class SyncScreen extends Screen {
             } catch (Exception exception) { throw new java.util.concurrent.CompletionException(exception); }
         }).whenComplete((outcome, error) -> minecraft.execute(() -> {
             boolean closed = sessionCancelled.get();
+            if (!closed && routeSwitch.pending()) {
+                if (outcome != null && outcome.plan() != null) {
+                    ResolutionPlan.TransferRoute target = routeSwitch.requested();
+                    routeSwitch.clear();
+                    logRouteSwitch("DOWNLOAD_ROUTE_SWITCH_FAILED", route, target, session.snapshot(),
+                            "TRANSFER_ALREADY_COMPLETED");
+                } else if (error != null && !interrupted(error)) {
+                    ResolutionPlan.TransferRoute target = routeSwitch.requested();
+                    routeSwitch.clear();
+                    session.finishTransfer(false, "staging");
+                    if (activeTransferCancel == token) activeTransferCancel = null;
+                    downloadCoordinator = null;
+                    notice = Component.translatable("jane.sync.quick_switch_failed");
+                    logRouteSwitch("DOWNLOAD_ROUTE_SWITCH_FAILED", route, target, session.snapshot(),
+                            "OLD_TRANSFER_FAILED");
+                    LOGGER.error("{}staging failed before route switch group={} route={}",
+                            JaneLog.client(session.context().serverId()), group, route, error);
+                    return;
+                } else {
+                    session.finishTransfer(true, null);
+                    if (activeTransferCancel == token) activeTransferCancel = null;
+                    ResolutionPlan.TransferRoute target = routeSwitch.takeAfterWorkerStops(session.snapshot());
+                    JaneSyncSession.Snapshot stopped = session.snapshot();
+                    if (target == null || !DownloadRouteSwitch.available(stopped, target,
+                            session.context().provider() != null)) {
+                        downloadCoordinator = null;
+                        downloadPaused = true;
+                        notice = Component.translatable("jane.sync.quick_switch_failed");
+                        logRouteSwitch("DOWNLOAD_ROUTE_SWITCH_FAILED", route, target, stopped,
+                                "SOURCE_UNAVAILABLE_OR_COMPLETE");
+                        return;
+                    }
+                    trustedSourceEnabled = target == ResolutionPlan.TransferRoute.TRUSTED_SOURCE;
+                    serverSourceEnabled = target == ResolutionPlan.TransferRoute.CURRENT_SERVER;
+                    downloadCoordinator = new DownloadCoordinator(trustedSourceEnabled, serverSourceEnabled,
+                            session.context().provider() != null);
+                    downloadPaused = false;
+                    logRouteSwitch("DOWNLOAD_ROUTE_SWITCH_COMPLETED", route, target, stopped, null);
+                    notice = Component.translatable("jane.sync.quick_switch_completed");
+                    advanceDownloadWorkflow();
+                    return;
+                }
+            }
             // Once pending is prepared, a late click cannot undo a completed transfer batch.
             boolean transferStopped = closed || (token.get() && (outcome == null || outcome.plan() == null));
             if (closed) {
@@ -367,16 +462,23 @@ final class SyncScreen extends Screen {
         updateButtons(snapshot);
         ClassicSyncLayout layout = ClassicSyncLayout.forSize(width, height);
         graphics.drawCenteredString(font, title, width / 2, layout.tiny() ? 5 : 8, 0xFFFFFF);
-        graphics.drawCenteredString(font, fit(Component.translatable("jane.sync.mismatch").getString(), width - 16),
-                width / 2, layout.tiny() ? 17 : 22, 0xFFAA55);
-        String counts = Component.translatable("jane.sync.counts", count(Comparison.Status.MISSING),
-                count(Comparison.Status.VERSION_MISMATCH),
-                count(Comparison.Status.HASH_MISMATCH) + count(Comparison.Status.FILE_ERROR)).getString();
-        graphics.drawCenteredString(font, fit(counts, width - 16), width / 2,
-                layout.tiny() ? 29 : 35, 0xFFFFFF);
+        if (!layout.tiny() || !snapshot.running()) {
+            graphics.drawCenteredString(font, fit(Component.translatable("jane.sync.mismatch").getString(), width - 16),
+                    width / 2, layout.tiny() ? 17 : 22, 0xFFAA55);
+            String counts = Component.translatable("jane.sync.counts", count(Comparison.Status.MISSING),
+                    count(Comparison.Status.VERSION_MISMATCH),
+                    count(Comparison.Status.HASH_MISMATCH) + count(Comparison.Status.FILE_ERROR)).getString();
+            graphics.drawCenteredString(font, fit(counts, width - 16), width / 2,
+                    layout.tiny() ? 29 : 35, 0xFFFFFF);
+        }
         if (layout.tiny()) renderTinySummary(graphics, snapshot);
         else renderClassicSummary(graphics, snapshot, layout);
+        if (quickTrustedButton.visible) graphics.drawCenteredString(font,
+                fit(Component.translatable(routeSwitch.pending() ? "jane.sync.quick_switching"
+                        : "jane.sync.quick_heading").getString(), width - 16),
+                width / 2, layout.quickHeaderY(), 0xDDDDDD);
         super.render(graphics, mouseX, mouseY, partialTick);
+        drawQuickSourceFeedback(graphics, mouseX, mouseY, snapshot);
     }
 
     private void renderClassicSummary(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot,
@@ -391,6 +493,11 @@ final class SyncScreen extends Screen {
             if (snapshot.error() == null) drawBar(graphics, 75, snapshot.resolutionPercent());
             return;
         }
+        if (snapshot.running() && layout.quickItemY() != 106) {
+            drawActiveProgress(graphics, snapshot, layout.quickItemY(), layout.quickBarY(),
+                    layout.quickRouteY());
+            return;
+        }
         int groupY = 49;
         if (selectedAvailabilityCount(snapshot, ResolutionPlan.Availability.TRUSTED_AVAILABLE) > 0) {
             drawGroup(graphics, "jane.sync.trusted_available", snapshot,
@@ -403,7 +510,8 @@ final class SyncScreen extends Screen {
             groupY += 25;
         }
         if (snapshot.running()) {
-            drawActiveProgress(graphics, snapshot, 106, 120, 133);
+            drawActiveProgress(graphics, snapshot, layout.quickItemY(), layout.quickBarY(),
+                    layout.quickRouteY());
             return;
         }
         if (auditWarning) {
@@ -457,7 +565,9 @@ final class SyncScreen extends Screen {
             return;
         }
         if (snapshot.running()) {
-            drawActiveProgress(graphics, snapshot, 43, 66, 55);
+            ClassicSyncLayout layout = ClassicSyncLayout.forSize(width, height);
+            drawActiveProgress(graphics, snapshot, layout.quickItemY(), layout.quickBarY(),
+                    layout.quickRouteY());
             return;
         }
         if (ready != null) {
@@ -534,6 +644,53 @@ final class SyncScreen extends Screen {
         graphics.fill(barX, y, barX + barWidth * clamped / 100, y + 8, 0xFF55AA55);
     }
 
+    private void drawQuickSourceFeedback(GuiGraphics graphics, int mouseX, int mouseY,
+                                         JaneSyncSession.Snapshot snapshot) {
+        if (!quickTrustedButton.visible) return;
+        if (snapshot.activeRoute() == ResolutionPlan.TransferRoute.TRUSTED_SOURCE)
+            outline(graphics, quickTrustedButton, 0xFF55DD55);
+        if (snapshot.activeRoute() == ResolutionPlan.TransferRoute.CURRENT_SERVER)
+            outline(graphics, quickServerButton, 0xFF55DD55);
+        if (routeSwitch.pending()) {
+            if (hovered(quickTrustedButton, mouseX, mouseY) || hovered(quickServerButton, mouseX, mouseY))
+                graphics.renderTooltip(font, Component.translatable("jane.sync.quick_switching"), mouseX, mouseY);
+            return;
+        }
+        if (activeTransferCancel == null || activeTransferCancel.get()) {
+            if (hovered(quickTrustedButton, mouseX, mouseY) || hovered(quickServerButton, mouseX, mouseY))
+                graphics.renderTooltip(font, Component.translatable("jane.sync.quick_stopping"), mouseX, mouseY);
+            return;
+        }
+        if (snapshot.error() != null || snapshot.localErrorCount() > 0) {
+            if (hovered(quickTrustedButton, mouseX, mouseY) || hovered(quickServerButton, mouseX, mouseY))
+                graphics.renderTooltip(font, Component.translatable("jane.sync.local_runtime_fix"), mouseX, mouseY);
+            return;
+        }
+        if (!quickTrustedButton.active && snapshot.activeRoute() != ResolutionPlan.TransferRoute.TRUSTED_SOURCE
+                && hovered(quickTrustedButton, mouseX, mouseY))
+            graphics.renderTooltip(font, Component.translatable("jane.sync.quick_no_trusted"), mouseX, mouseY);
+        if (!quickServerButton.active && snapshot.activeRoute() != ResolutionPlan.TransferRoute.CURRENT_SERVER
+                && hovered(quickServerButton, mouseX, mouseY))
+            graphics.renderTooltip(font, Component.translatable(session.context().provider() == null
+                    ? "jane.sync.server_source_unavailable" : "jane.sync.quick_no_remaining"), mouseX, mouseY);
+    }
+
+    private static boolean hovered(Button button, int mouseX, int mouseY) {
+        return mouseX >= button.getX() && mouseX < button.getX() + button.getWidth()
+                && mouseY >= button.getY() && mouseY < button.getY() + button.getHeight();
+    }
+
+    private static void outline(GuiGraphics graphics, Button button, int color) {
+        int x = button.getX() - 1;
+        int y = button.getY() - 1;
+        int right = x + button.getWidth() + 2;
+        int bottom = y + button.getHeight() + 2;
+        graphics.fill(x, y, right, y + 1, color);
+        graphics.fill(x, bottom - 1, right, bottom, color);
+        graphics.fill(x, y, x + 1, bottom, color);
+        graphics.fill(right - 1, y, right, bottom, color);
+    }
+
     private String fit(String value, int maxWidth) {
         if (maxWidth <= 0) return "";
         if (font.width(value) <= maxWidth) return value;
@@ -563,8 +720,9 @@ final class SyncScreen extends Screen {
     private void updateButtons(JaneSyncSession.Snapshot snapshot) {
         downloadButton.visible = retryButton.visible = false;
         cancelTransferButton.visible = finishButton.visible = false;
-        selectionButton.visible = true;
+        selectionButton.visible = !snapshot.running();
         selectionButton.active = !launching && !sessionCancelled.get();
+        updateQuickButtons(snapshot);
         if (launching) return;
         Button primary = downloadButton;
         Button secondary = null;
@@ -590,12 +748,48 @@ final class SyncScreen extends Screen {
         placeMain(primary, secondary);
     }
 
+    private void updateQuickButtons(JaneSyncSession.Snapshot snapshot) {
+        boolean shown = snapshot.running() && !launching && ready == null && !sessionCancelled.get();
+        quickTrustedButton.visible = quickServerButton.visible = shown;
+        if (!shown) return;
+        ClassicSyncLayout layout = ClassicSyncLayout.forSize(width, height);
+        quickTrustedButton.setX(layout.quickButtonX(0));
+        quickTrustedButton.setY(layout.quickButtonsY());
+        quickTrustedButton.setWidth(layout.quickButtonWidth());
+        quickServerButton.setX(layout.quickButtonX(1));
+        quickServerButton.setY(layout.quickButtonsY());
+        quickServerButton.setWidth(layout.quickButtonWidth());
+        boolean trustedSelected = snapshot.activeRoute() == ResolutionPlan.TransferRoute.TRUSTED_SOURCE;
+        boolean serverSelected = snapshot.activeRoute() == ResolutionPlan.TransferRoute.CURRENT_SERVER;
+        quickTrustedButton.setMessage(quickLabel("jane.sync.quick_trusted", trustedSelected));
+        quickServerButton.setMessage(quickLabel("jane.sync.quick_server", serverSelected));
+        boolean transferCanSwitch = activeTransferCancel != null && !activeTransferCancel.get()
+                && !routeSwitch.pending();
+        quickTrustedButton.active = transferCanSwitch && !trustedSelected
+                && DownloadRouteSwitch.available(snapshot, ResolutionPlan.TransferRoute.TRUSTED_SOURCE,
+                session.context().provider() != null);
+        quickServerButton.active = transferCanSwitch && !serverSelected
+                && DownloadRouteSwitch.available(snapshot, ResolutionPlan.TransferRoute.CURRENT_SERVER,
+                session.context().provider() != null);
+    }
+
+    private static Component quickLabel(String key, boolean selected) {
+        Component label = Component.translatable(key);
+        return selected ? Component.literal("✓ ").withStyle(ChatFormatting.GREEN).append(label) : label;
+    }
+
     private void placeMain(Button primary, Button secondary) {
         ClassicSyncLayout layout = ClassicSyncLayout.forSize(width, height);
         primary.visible = true;
         primary.setY(layout.mainY());
         primary.setX(layout.mainX());
         primary.setWidth(layout.mainWidth());
+        if (primary == cancelTransferButton && layout.quickCancelInFooter()) {
+            primary.setX(layout.compactFooterX(1));
+            primary.setY(layout.footerY());
+            primary.setWidth(layout.footerWidth());
+            return;
+        }
         if (layout.compact()) {
             if (secondary != null) {
                 int half = (layout.mainWidth() - 4) / 2;
@@ -724,6 +918,7 @@ final class SyncScreen extends Screen {
         audit("USER_CANCEL_SYNC", Map.of("selectedCount", Integer.toString(selection.selectedUnmatchedModIds().size())));
         if (ready == null) {
             sessionCancelled.set(true);
+            routeSwitch.clear();
             cancelTransfer();
             if (!session.snapshot().running()) discardWorkspace();
         }

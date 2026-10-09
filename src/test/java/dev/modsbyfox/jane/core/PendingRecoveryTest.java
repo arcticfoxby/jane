@@ -59,6 +59,7 @@ class PendingRecoveryTest {
         Files.writeString(pending.resolve("success.marker"), "SUCCESS");
         assertTrue(PendingRecovery.scan(gameDir).isEmpty());
         assertTrue(Files.exists(backup.resolve("success.marker")));
+        assertFalse(Files.exists(backup.resolve("update.log")), "A missing CMD log must never be invented");
         assertFalse(Files.exists(pending));
     }
 
@@ -85,14 +86,95 @@ class PendingRecoveryTest {
         Files.writeString(other.resolve("success.marker"), "SUCCESS");
         Path current = PathSafety.janeDirectory(gameDir, "backups", SERVER, STAMP);
         Files.copy(pending.resolve("backup.json"), current.resolve("backup.json"));
+        String diagnostic = "SYNC " + ID + "\nINSTALL create OK\nSUCCESS\n";
+        Files.writeString(pending.resolve("update.log"), diagnostic);
         Files.writeString(pending.resolve("success.marker"), "SUCCESS");
 
         assertTrue(PendingRecovery.scan(gameDir).isEmpty());
         assertTrue(Files.isRegularFile(current.resolve("success.marker")));
+        assertEquals(diagnostic, Files.readString(current.resolve("update.log")),
+                "A verified update must retain its original CMD diagnostics after pending cleanup");
         assertFalse(Files.exists(backups.resolve(oldest)));
         assertTrue(Files.exists(failed));
         assertTrue(Files.exists(other));
         assertFalse(Files.exists(pending));
         assertFalse(Files.exists(stage));
+    }
+
+    @Test
+    void unsafeLogBlocksCleanupWithoutClaimingInstalledJarIsCorrupt() throws Exception {
+        UpdatePlan plan = completedAddPlan();
+        Path pending = gameDir.resolve("jane/pending/" + ID);
+        Files.createDirectory(pending.resolve("update.log"));
+        var items = PendingRecovery.scan(gameDir);
+        assertEquals(1, items.size());
+        assertTrue(items.get(0).issue().contains("Unsafe or oversized pending update log"));
+        assertTrue(Files.isDirectory(pending));
+        assertTrue(Files.isRegularFile(gameDir.resolve("jane/backups/" + SERVER + "/" + STAMP + "/backup.json")));
+        assertFalse(Files.exists(gameDir.resolve("jane/backups/" + SERVER + "/" + STAMP + "/success.marker")));
+    }
+
+    @Test
+    void oversizedLogLeavesPendingEvidenceForRecovery() throws Exception {
+        completedAddPlan();
+        Path pending = gameDir.resolve("jane/pending/" + ID);
+        try (var file = new java.io.RandomAccessFile(pending.resolve("update.log").toFile(), "rw")) {
+            file.setLength(8L * 1024 * 1024 + 1);
+        }
+        var items = PendingRecovery.scan(gameDir);
+        assertEquals(1, items.size());
+        assertTrue(items.get(0).issue().contains("Unsafe or oversized pending update log"));
+        assertTrue(Files.exists(pending.resolve("update.log")));
+        assertFalse(Files.exists(gameDir.resolve("jane/backups/" + SERVER + "/" + STAMP + "/success.marker")));
+    }
+
+    @Test
+    void symlinkedLogCannotBeCopiedOrCausePendingCleanupWhenSupported() throws Exception {
+        completedAddPlan();
+        Path pending = gameDir.resolve("jane/pending/" + ID);
+        Path untouched = Files.writeString(gameDir.resolve("untouched.log"), "private diagnostic");
+        try {
+            Files.createSymbolicLink(pending.resolve("update.log"), untouched);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException unsupported) {
+            return;
+        }
+        var items = PendingRecovery.scan(gameDir);
+        assertEquals(1, items.size());
+        assertTrue(items.get(0).issue().contains("Unsafe or oversized pending update log"));
+        assertEquals("private diagnostic", Files.readString(untouched));
+        assertTrue(Files.isSymbolicLink(pending.resolve("update.log")));
+        assertFalse(Files.exists(gameDir.resolve("jane/backups/" + SERVER + "/" + STAMP + "/update.log")));
+    }
+
+    @Test
+    void symlinkedBackupLogCannotBeOverwrittenWhenSupported() throws Exception {
+        completedAddPlan();
+        Path pending = gameDir.resolve("jane/pending/" + ID);
+        Files.writeString(pending.resolve("update.log"), "verified updater log");
+        Path backup = gameDir.resolve("jane/backups/" + SERVER + "/" + STAMP);
+        Path untouched = Files.writeString(gameDir.resolve("untouched.log"), "untouched");
+        try {
+            Files.createSymbolicLink(backup.resolve("update.log"), untouched);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException unsupported) {
+            return;
+        }
+        var items = PendingRecovery.scan(gameDir);
+        assertEquals(1, items.size());
+        assertTrue(items.get(0).issue().contains("Unsafe or oversized backup update log"));
+        assertEquals("untouched", Files.readString(untouched));
+        assertTrue(Files.exists(pending.resolve("update.log")));
+        assertFalse(Files.exists(backup.resolve("success.marker")));
+    }
+
+    private UpdatePlan completedAddPlan() throws Exception {
+        Path mods = Files.createDirectory(gameDir.resolve("mods"));
+        Path installed = Files.writeString(mods.resolve("new.jar"), "new");
+        UpdatePlan plan = new UpdatePlan(ID, SERVER, STAMP, List.of(new UpdatePlan.Operation(
+                "create", UpdatePlan.Kind.ADD, null, null, "new.jar", Hashing.sha512(installed), Files.size(installed))));
+        Path pending = PendingStore.create(gameDir, plan);
+        Path backup = PathSafety.janeDirectory(gameDir, "backups", SERVER, STAMP);
+        Files.copy(pending.resolve("backup.json"), backup.resolve("backup.json"));
+        Files.writeString(pending.resolve("success.marker"), "SUCCESS");
+        return plan;
     }
 }

@@ -3,6 +3,7 @@ package dev.modsbyfox.jane.fabric.client;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.modsbyfox.jane.core.Comparison;
+import dev.modsbyfox.jane.core.DownloadCoordinator;
 import dev.modsbyfox.jane.core.Hashing;
 import dev.modsbyfox.jane.core.JaneSyncSession;
 import dev.modsbyfox.jane.core.ManifestEntry;
@@ -117,6 +118,82 @@ class RouteSwitchingTest {
         session.finishTransfer(false, null);
         assertEquals(2, update.operations().size());
         assertEquals(2, update.operations().stream().map(UpdatePlan.Operation::modId).distinct().count());
+    }
+
+    @Test void quickTrustedToServerWaitsForOldWorkerAndDoesNotDownloadReadyFileAgain() throws Exception {
+        Fixture fixture = fixture(2);
+        JaneSyncSession session = fixture.session();
+        DownloadRouteSwitch switcher = new DownloadRouteSwitch();
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.TRUSTED_SOURCE));
+        ready(fixture, 0);
+        session.update("mod1", JaneSyncSession.RuntimeState.DOWNLOADING, 3);
+        assertTrue(switcher.request(session.snapshot(), ResolutionPlan.TransferRoute.CURRENT_SERVER, true, false));
+        assertNull(switcher.takeAfterWorkerStops(session.snapshot()));
+        assertFalse(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        session.finishTransfer(true, null);
+        assertEquals(ResolutionPlan.TransferRoute.CURRENT_SERVER,
+                switcher.takeAfterWorkerStops(session.snapshot()));
+        DownloadCoordinator newCoordinator = new DownloadCoordinator(false, true, true);
+        assertEquals(DownloadCoordinator.Action.TRUSTED_SERVER_FALLBACK, newCoordinator.next(session.snapshot()));
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        assertEquals(List.of("mod1"), session.snapshot().queue(ResolutionPlan.TransferGroup.TRUSTED).stream()
+                .map(item -> item.comparison().required().modId()).toList());
+        assertEquals(JaneSyncSession.RuntimeState.READY, session.snapshot().items().get(0).state());
+        assertFalse(switcher.pending());
+    }
+
+    @Test void quickServerToTrustedWaitsForOldWorkerAndPreservesReady() throws Exception {
+        Fixture fixture = fixture(2);
+        JaneSyncSession session = fixture.session();
+        DownloadRouteSwitch switcher = new DownloadRouteSwitch();
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.CURRENT_SERVER));
+        ready(fixture, 0);
+        session.update("mod1", JaneSyncSession.RuntimeState.DOWNLOADING, 4);
+        assertTrue(switcher.request(session.snapshot(), ResolutionPlan.TransferRoute.TRUSTED_SOURCE, true, false));
+        assertNull(switcher.takeAfterWorkerStops(session.snapshot()));
+        session.finishTransfer(true, null);
+        assertEquals(ResolutionPlan.TransferRoute.TRUSTED_SOURCE,
+                switcher.takeAfterWorkerStops(session.snapshot()));
+        DownloadCoordinator newCoordinator = new DownloadCoordinator(true, false, true);
+        assertEquals(DownloadCoordinator.Action.TRUSTED, newCoordinator.next(session.snapshot()));
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.TRUSTED_SOURCE));
+        assertEquals(List.of("mod1"), session.snapshot().queue(ResolutionPlan.TransferGroup.TRUSTED).stream()
+                .map(item -> item.comparison().required().modId()).toList());
+        assertEquals(ResolutionPlan.TransferRoute.CURRENT_SERVER,
+                session.snapshot().items().get(0).completedVia());
+    }
+
+    @Test void quickSourceRequiresAvailableTargetAndCannotSwitchAfterAllFilesReady() throws Exception {
+        Fixture fixture = fixture(1);
+        JaneSyncSession session = fixture.session();
+        DownloadRouteSwitch switcher = new DownloadRouteSwitch();
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.TRUSTED_SOURCE));
+        assertFalse(switcher.request(session.snapshot(), ResolutionPlan.TransferRoute.CURRENT_SERVER, false, false));
+        assertFalse(switcher.request(session.snapshot(), ResolutionPlan.TransferRoute.TRUSTED_SOURCE, true, false));
+        ready(fixture, 0);
+        assertFalse(switcher.request(session.snapshot(), ResolutionPlan.TransferRoute.CURRENT_SERVER, true, false));
+        assertFalse(switcher.pending());
+    }
+
+    @Test void manualCancelCannotTurnIntoRouteSwitchBeforeOldWorkerStops() throws Exception {
+        Fixture fixture = fixture(1);
+        JaneSyncSession session = fixture.session();
+        DownloadRouteSwitch switcher = new DownloadRouteSwitch();
+        assertTrue(session.startTransfer(ResolutionPlan.TransferGroup.TRUSTED,
+                ResolutionPlan.TransferRoute.TRUSTED_SOURCE));
+        session.update("mod0", JaneSyncSession.RuntimeState.DOWNLOADING, 3);
+        assertFalse(switcher.request(session.snapshot(), ResolutionPlan.TransferRoute.CURRENT_SERVER,
+                true, true));
+        assertFalse(switcher.pending());
+        session.finishTransfer(true, null);
+        assertNull(switcher.takeAfterWorkerStops(session.snapshot()));
+        assertEquals(JaneSyncSession.RuntimeState.WAITING, session.snapshot().items().get(0).state());
     }
 
     @Test void mixedPresentTrustedRoutesAndConfirmedServerOnlyProduceOnePendingPlan() throws Exception {

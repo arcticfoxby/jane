@@ -9,16 +9,24 @@ import dev.modsbyfox.jane.core.BackupRetention;
 import dev.modsbyfox.jane.core.PathSafety;
 import dev.modsbyfox.jane.core.UpdatePlan;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class PendingRecovery {
+    private static final Logger LOGGER = LoggerFactory.getLogger("jane");
+    private static final long MAX_UPDATE_LOG_BYTES = 8L * 1024 * 1024;
     public record Item(String syncId, UpdatePlan plan, boolean failed, String issue) { }
 
     private PendingRecovery() { }
@@ -130,11 +138,52 @@ public final class PendingRecovery {
                 }
             }
         }
-        Files.writeString(backup.resolve("success.marker"), "SUCCESS\n", StandardCharsets.UTF_8);
+        preserveUpdateLog(gameDir, plan, backup);
+        Path marker = backup.resolve("success.marker");
+        if (Files.exists(marker, LinkOption.NOFOLLOW_LINKS)
+                && (Files.isSymbolicLink(marker) || !Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS)))
+            throw new IOException("Unsafe backup success marker");
+        Files.writeString(marker, "SUCCESS\n", StandardCharsets.UTF_8);
         prune(gameDir, plan.serverId());
         Path staging = PathSafety.janeDirectory(gameDir, "staging").resolve(plan.syncId());
         if (Files.exists(staging, LinkOption.NOFOLLOW_LINKS)) deleteTree(staging);
         deleteTree(PathSafety.janeDirectory(gameDir, "pending", plan.syncId()));
+    }
+
+    /** Preserve the updater's bounded original log before a verified pending transaction is cleaned. */
+    private static void preserveUpdateLog(Path gameDir, UpdatePlan plan, Path backup) throws IOException {
+        Path pending = PathSafety.janeDirectory(gameDir, "pending", plan.syncId());
+        Path source = pending.resolve("update.log");
+        if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS)) {
+            LOGGER.warn("Jane verified update has no CMD log syncId={}; continuing recovery", plan.syncId());
+            return;
+        }
+        if (Files.isSymbolicLink(source) || !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)
+                || Files.size(source) > MAX_UPDATE_LOG_BYTES)
+            throw new IOException("Unsafe or oversized pending update log");
+        Path target = backup.resolve("update.log");
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                && (Files.isSymbolicLink(target) || !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+                || Files.size(target) > MAX_UPDATE_LOG_BYTES))
+            throw new IOException("Unsafe or oversized backup update log");
+        Path temporary = Files.createTempFile(backup, "update-log-", ".tmp");
+        try {
+            try (InputStream input = Files.newInputStream(source, LinkOption.NOFOLLOW_LINKS);
+                 OutputStream output = Files.newOutputStream(temporary, StandardOpenOption.WRITE,
+                         LinkOption.NOFOLLOW_LINKS)) {
+                byte[] buffer = new byte[64 * 1024];
+                long copied = 0;
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    copied += read;
+                    if (copied > MAX_UPDATE_LOG_BYTES) throw new IOException("Pending update log grew beyond limit");
+                    output.write(buffer, 0, read);
+                }
+            }
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
     }
 
     private static void prune(Path gameDir, String serverId) throws IOException {

@@ -230,5 +230,14 @@
   "jane.sync.download_paused": "下载已暂停，已验证文件将保留。",
   "jane.sync.selected_completed": "所选 Mod 已下载并验证完成。",
   "jane.sync.source_counts": "可信来源：%s · 当前服务端：%s · 查询失败：%s",
-  "jane.sync.source_counts_compact": "可信 %s · 服务端 %s · 失败 %s"
+  "jane.sync.source_counts_compact": "可信 %s · 服务端 %s · 失败 %s",
+  "jane.sync.quick_heading": "快捷切换下载源",
+  "jane.sync.quick_trusted": "可信来源",
+  "jane.sync.quick_server": "当前服务器",
+  "jane.sync.quick_no_trusted": "没有剩余的可信来源文件可由此线路下载。",
+  "jane.sync.quick_no_remaining": "没有剩余文件可由此线路下载。",
+  "jane.sync.quick_switching": "正在停止当前传输并切换来源...",
+  "jane.sync.quick_stopping": "当前下载正在停止，请稍候。",
+  "jane.sync.quick_switch_completed": "已切换下载来源，继续准备剩余文件。",
+  "jane.sync.quick_switch_failed": "未能切换下载来源，请查看本地日志。"
 }

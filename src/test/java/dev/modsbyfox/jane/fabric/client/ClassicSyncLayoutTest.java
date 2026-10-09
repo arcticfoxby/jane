@@ -46,4 +46,19 @@ class ClassicSyncLayoutTest {
         }
         assertEquals(0, ClassicSyncLayout.forSize(330, 221).notice(114, 2, true).lines());
     }
+
+    @Test void quickSourceButtonsFitBetweenProgressAndActionsAtScaledSizes() {
+        int[][] windows = {{854, 480}, {427, 240}, {284, 160}, {214, 120},
+                {1280, 720}, {640, 360}, {426, 240}, {1920, 1080}, {960, 540}};
+        for (int[] window : windows) {
+            ClassicSyncLayout layout = ClassicSyncLayout.forSize(window[0], window[1]);
+            String size = window[0] + "x" + window[1];
+            assertTrue(layout.quickRouteY() + 9 < layout.quickHeaderY(), size);
+            assertTrue(layout.quickHeaderY() + 9 < layout.quickButtonsY(), size);
+            assertTrue(layout.quickButtonX(0) >= 0, size);
+            assertTrue(layout.quickButtonX(1) + layout.quickButtonWidth() <= window[0], size);
+            assertTrue(layout.quickButtonsY() + 20 <
+                    (layout.quickCancelInFooter() ? layout.footerY() : layout.mainY()), size);
+        }
+    }
 }

@@ -230,5 +230,14 @@
   "jane.sync.download_paused": "Download paused; verified files are retained.",
   "jane.sync.selected_completed": "Selected mods downloaded and verified.",
   "jane.sync.source_counts": "Trusted: %s · Current server: %s · Lookup failed: %s",
-  "jane.sync.source_counts_compact": "Trusted %s · Server %s · Failed %s"
+  "jane.sync.source_counts_compact": "Trusted %s · Server %s · Failed %s",
+  "jane.sync.quick_heading": "Quick source switch",
+  "jane.sync.quick_trusted": "Trusted",
+  "jane.sync.quick_server": "This server",
+  "jane.sync.quick_no_trusted": "No remaining trusted-source file can use this route.",
+  "jane.sync.quick_no_remaining": "No remaining file can use this route.",
+  "jane.sync.quick_switching": "Stopping the current transfer to switch sources...",
+  "jane.sync.quick_stopping": "The current download is stopping. Please wait.",
+  "jane.sync.quick_switch_completed": "Source switched; preparing the remaining files.",
+  "jane.sync.quick_switch_failed": "Could not switch sources. Check the local log."
 }

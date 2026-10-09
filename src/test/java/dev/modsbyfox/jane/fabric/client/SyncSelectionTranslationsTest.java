@@ -28,4 +28,17 @@ class SyncSelectionTranslationsTest {
         assertEquals("跳过未选项目并尝试加入", zh.get("jane.select.try_join").getAsString());
         assertEquals("我已了解风险，仍要尝试加入", zh.get("jane.risk.confirm").getAsString());
     }
+
+    @Test void quickSourceControlsAndUnavailableReasonsExistInBothLanguages() throws Exception {
+        JsonObject zh = language("zh_cn");
+        JsonObject en = language("en_us");
+        for (String key : new String[] {"jane.sync.quick_heading", "jane.sync.quick_trusted",
+                "jane.sync.quick_server", "jane.sync.quick_no_trusted", "jane.sync.quick_no_remaining",
+                "jane.sync.quick_switching", "jane.sync.quick_stopping",
+                "jane.sync.quick_switch_completed",
+                "jane.sync.quick_switch_failed"}) {
+            assertTrue(zh.has(key), "Missing Chinese key: " + key);
+            assertTrue(en.has(key), "Missing English key: " + key);
+        }
+    }
 }
