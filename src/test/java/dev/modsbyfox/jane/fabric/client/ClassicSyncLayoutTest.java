@@ -61,4 +61,29 @@ class ClassicSyncLayoutTest {
                     (layout.quickCancelInFooter() ? layout.footerY() : layout.mainY()), size);
         }
     }
+
+    @Test void quickAdviceFitsAroundSourceControlsAtScaledSizes() {
+        int[][] windows = {{854, 480}, {426, 240}, {284, 160}, {214, 120},
+                {1280, 720}, {330, 221}, {640, 360}};
+        for (int[] window : windows) {
+            ClassicSyncLayout layout = ClassicSyncLayout.forSize(window[0], window[1]);
+            String size = window[0] + "x" + window[1];
+            for (int lines : new int[] {1, 2}) {
+                int firstY = layout.quickHintY(lines);
+                if (firstY < 0) {
+                    assertEquals("214x120", size);
+                    continue;
+                }
+                int lastBottom = firstY + (lines - 1) * 11 + 9;
+                if (firstY < layout.quickHeaderY()) {
+                    assertTrue(firstY >= layout.quickRouteY() + 10, size);
+                    assertTrue(lastBottom < layout.quickHeaderY(), size);
+                } else {
+                    assertTrue(firstY >= layout.quickButtonsY() + 25, size);
+                    assertTrue(lastBottom + 3 <=
+                            (layout.quickCancelInFooter() ? layout.footerY() : layout.mainY()), size);
+                }
+            }
+        }
+    }
 }

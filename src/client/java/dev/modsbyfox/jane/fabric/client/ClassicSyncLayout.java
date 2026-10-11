@@ -30,6 +30,15 @@ record ClassicSyncLayout(boolean compact, boolean tiny, int mainX, int mainWidth
     int quickButtonWidth() { return (mainWidth - 4) / 2; }
     int quickButtonX(int slot) { return mainX + slot * (quickButtonWidth() + 4); }
 
+    /** Keep download advice clear of the route label, source buttons, and actions. */
+    int quickHintY(int lines) {
+        int below = quickButtonsY() + 25;
+        int actionY = quickCancelInFooter() ? footerY : mainY;
+        if (below + (lines - 1) * 11 + 12 <= actionY) return below;
+        int above = quickHeaderY() - lines * 11 - 4;
+        return above >= quickRouteY() + 10 ? above : -1;
+    }
+
     int actionTop(boolean retryVisible) {
         return compact ? mainY : retryVisible ? retryY() : selectionY();
     }

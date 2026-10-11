@@ -18,6 +18,9 @@ Thumbs.db
 # Local project instructions
 AGENTS.md
 
+# Local handoff notes (versioned copies live outside this repository)
+/NEOFORGE_PROGRESS.md
+
 # Local secrets and signing material
 .env
 .env.*

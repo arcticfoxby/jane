@@ -477,8 +477,35 @@ final class SyncScreen extends Screen {
                 fit(Component.translatable(routeSwitch.pending() ? "jane.sync.quick_switching"
                         : "jane.sync.quick_heading").getString(), width - 16),
                 width / 2, layout.quickHeaderY(), 0xDDDDDD);
+        drawQuickSourceHint(graphics, snapshot, layout);
         super.render(graphics, mouseX, mouseY, partialTick);
         drawQuickSourceFeedback(graphics, mouseX, mouseY, snapshot);
+    }
+
+    private void drawQuickSourceHint(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot,
+                                     ClassicSyncLayout layout) {
+        AtomicBoolean token = activeTransferCancel;
+        if (!quickTrustedButton.visible || snapshot.error() != null || snapshot.localErrorCount() > 0
+                || routeSwitch.pending() || token == null || token.get())
+            return;
+        boolean providerAvailable = session.context().provider() != null;
+        boolean alternativeAvailable = snapshot.activeRoute() == ResolutionPlan.TransferRoute.TRUSTED_SOURCE
+                ? DownloadRouteSwitch.available(snapshot,
+                ResolutionPlan.TransferRoute.CURRENT_SERVER, providerAvailable)
+                : snapshot.activeRoute() == ResolutionPlan.TransferRoute.CURRENT_SERVER
+                && DownloadRouteSwitch.available(snapshot,
+                ResolutionPlan.TransferRoute.TRUSTED_SOURCE, providerAvailable);
+        int lines = alternativeAvailable ? 2 : 1;
+        int hintY = layout.quickHintY(lines);
+        if (hintY < 0) return;
+        String firstKey = alternativeAvailable ? "jane.sync.quick_slow_switch"
+                : "jane.sync.quick_slow_network";
+        graphics.drawCenteredString(font, fit(Component.translatable(firstKey).getString(), width - 16),
+                width / 2, hintY, 0xAAAAAA);
+        if (alternativeAvailable)
+            graphics.drawCenteredString(font,
+                    fit(Component.translatable("jane.sync.quick_slow_both").getString(), width - 16),
+                    width / 2, hintY + 11, 0xAAAAAA);
     }
 
     private void renderClassicSummary(GuiGraphics graphics, JaneSyncSession.Snapshot snapshot,

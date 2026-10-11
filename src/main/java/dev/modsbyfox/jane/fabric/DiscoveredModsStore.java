@@ -26,7 +26,7 @@ final class DiscoveredModsStore {
         }
         JsonObject json = new JsonObject();
         json.addProperty("schemaVersion", 2);
-        json.addProperty("janeVersion", "1.1.8.2-beta");
+        json.addProperty("janeVersion", "1.1.8.3-beta");
         JsonArray mods = new JsonArray();
         for (ServerManifest.Classified item : classified) {
             var candidate = item.discovered().candidate();
