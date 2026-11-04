@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.client.Minecraft;
 
@@ -14,6 +15,13 @@ final class WindowsHelperLauncher {
 
     static void launch(Minecraft client, Path gameDir, String title, String scriptName,
                        String... relativeDirectory) throws IOException {
+        launch(client, gameDir, title, scriptName, () -> { }, relativeDirectory);
+    }
+
+    /** The callback reports a confirmed CMD launch before Minecraft begins shutting down. */
+    static void launch(Minecraft client, Path gameDir, String title, String scriptName,
+                       Runnable afterStart, String... relativeDirectory) throws IOException {
+        Objects.requireNonNull(afterStart, "afterStart");
         if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("windows"))
             throw new IOException("Jane automatic file operations require Windows");
         if (!title.matches("Jane [A-Za-z ]{1,32}") || !scriptName.matches("[a-z-]{1,32}\\.bat"))
@@ -34,6 +42,11 @@ final class WindowsHelperLauncher {
             Thread.currentThread().interrupt();
             throw new IOException("Jane helper launch interrupted", exception);
         }
-        client.stop();
+        try {
+            afterStart.run();
+        } finally {
+            // The detached helper is already waiting for Minecraft to close.
+            client.stop();
+        }
     }
 }

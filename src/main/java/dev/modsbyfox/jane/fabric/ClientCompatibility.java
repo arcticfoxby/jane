@@ -40,7 +40,7 @@ public final class ClientCompatibility {
             }
             ClientCompatibilityReport.ExtraMod extra = new ClientCompatibilityReport.ExtraMod(
                     mod.modId(), mod.displayName(), mod.version(), mod.jar().getFileName().toString(),
-                    hash, kind, mod.jar());
+                    hash, kind, mod.jar(), mod.fileIdentity());
             if (kind == ClientCompatibilityReport.Kind.EXPLICIT_CLIENT) explicit.add(extra);
             else other.add(extra);
         }

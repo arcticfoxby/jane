@@ -44,6 +44,8 @@ class ClientCompatibilityTest {
         assertEquals(List.of("clientlib"), report.otherExtraMods().stream()
                 .map(ClientCompatibilityReport.ExtraMod::modId).toList());
         assertNull(report.otherExtraMods().get(0).sha512());
+        assertEquals(java.nio.file.Files.size(mods.resolve("clientlib.jar")),
+                report.otherExtraMods().get(0).fileIdentity().size());
         assertFalse(report.explicitClientMods().stream().anyMatch(mod -> mod.modId().equals("clienthelper")
                 || mod.modId().equals("create") || mod.modId().equals("jane")));
     }
@@ -91,5 +93,19 @@ class ClientCompatibilityTest {
         assertEquals(List.of("clientlib"), report.otherExtraMods().stream()
                 .map(ClientCompatibilityReport.ExtraMod::modId).toList());
         assertNull(report.otherExtraMods().get(0).sha512());
+        assertNotNull(report.otherExtraMods().get(0).fileIdentity());
+    }
+
+    @Test void explicitFingerprintIncludesCheapPhysicalIdentity() {
+        var first = new ClientCompatibilityReport.ExtraMod("clientmod", "Client Mod", "1", "clientmod.jar",
+                "a".repeat(128), ClientCompatibilityReport.Kind.EXPLICIT_CLIENT, Path.of("clientmod.jar"),
+                new ClientCompatibilityReport.FileIdentity(100,
+                        java.nio.file.attribute.FileTime.fromMillis(1000), "file-a"));
+        var changed = new ClientCompatibilityReport.ExtraMod("clientmod", "Client Mod", "1", "clientmod.jar",
+                "a".repeat(128), ClientCompatibilityReport.Kind.EXPLICIT_CLIENT, Path.of("clientmod.jar"),
+                new ClientCompatibilityReport.FileIdentity(100,
+                        java.nio.file.attribute.FileTime.fromMillis(1001), "file-a"));
+        assertNotEquals(ClientCompatibilityReport.fingerprint(List.of(first)),
+                ClientCompatibilityReport.fingerprint(List.of(changed)));
     }
 }

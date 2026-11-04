@@ -1,6 +1,7 @@
 package dev.modsbyfox.jane.fabric;
 
 import dev.modsbyfox.jane.core.Comparison;
+import dev.modsbyfox.jane.core.ClientCompatibilityReport;
 import dev.modsbyfox.jane.core.PathSafety;
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
@@ -12,13 +13,20 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
 
 /** Discovers only physical, direct-child Fabric JARs; nested Loader containers are never inspected. */
 public final class ClientPhysicalDiscovery {
     public record PhysicalClientMod(String modId, String displayName, String version,
-                                    ModEnvironment environment, Path jar) { }
+                                    ModEnvironment environment, Path jar,
+                                    ClientCompatibilityReport.FileIdentity fileIdentity) {
+        public PhysicalClientMod(String modId, String displayName, String version,
+                                 ModEnvironment environment, Path jar) {
+            this(modId, displayName, version, environment, jar, null);
+        }
+    }
     public record Discovery(Map<String, List<Comparison.LocalMod>> candidates, List<PhysicalClientMod> all) {
         public Discovery {
             candidates = Map.copyOf(candidates);
@@ -47,11 +55,15 @@ public final class ClientPhysicalDiscovery {
         List<PhysicalClientMod> all = new ArrayList<>();
         for (Path jar : jars) {
             Path safe = PathSafety.existingJarInMods(root, jar);
-            FabricJarMetadata.readPhysical(safe).ifPresent(metadata -> {
-                byId.computeIfAbsent(metadata.modId(), ignored -> new ArrayList<>())
-                        .add(new Candidate(metadata, safe));
-                all.add(new PhysicalClientMod(metadata.modId(), metadata.displayName(), metadata.version(),
-                        metadata.environment(), safe));
+            ClientCompatibilityReport.FileIdentity before = identityOrNull(safe);
+            Optional<FabricJarMetadata.PhysicalMetadata> metadata = FabricJarMetadata.readPhysical(safe);
+            ClientCompatibilityReport.FileIdentity after = identityOrNull(safe);
+            ClientCompatibilityReport.FileIdentity identity = before != null && before.equals(after) ? before : null;
+            metadata.ifPresent(value -> {
+                byId.computeIfAbsent(value.modId(), ignored -> new ArrayList<>())
+                        .add(new Candidate(value, safe));
+                all.add(new PhysicalClientMod(value.modId(), value.displayName(), value.version(),
+                        value.environment(), safe, identity));
             });
         }
         Map<String, List<Comparison.LocalMod>> candidates = new TreeMap<>();
@@ -60,5 +72,13 @@ public final class ClientPhysicalDiscovery {
                     new Comparison.LocalMod(group.getKey(), candidate.metadata().version(), candidate.jar())).toList());
         }
         return new Discovery(candidates, all);
+    }
+
+    private static ClientCompatibilityReport.FileIdentity identityOrNull(Path jar) {
+        try {
+            return ClientCompatibilityReport.FileIdentity.capture(jar);
+        } catch (IOException | SecurityException exception) {
+            return null;
+        }
     }
 }

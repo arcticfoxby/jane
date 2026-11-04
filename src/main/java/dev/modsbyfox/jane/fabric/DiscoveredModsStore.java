@@ -3,6 +3,7 @@ package dev.modsbyfox.jane.fabric;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import dev.modsbyfox.jane.core.JaneVersion;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -26,7 +27,7 @@ final class DiscoveredModsStore {
         }
         JsonObject json = new JsonObject();
         json.addProperty("schemaVersion", 2);
-        json.addProperty("janeVersion", "1.1.8.3-beta");
+        json.addProperty("janeVersion", JaneVersion.VALUE);
         JsonArray mods = new JsonArray();
         for (ServerManifest.Classified item : classified) {
             var candidate = item.discovered().candidate();

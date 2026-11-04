@@ -1,14 +1,22 @@
 ---
 
-# 简（Jane）1.1.8.3 Beta
+# 简（Jane）1.1.8.4 Beta
 
-Jane targets Minecraft Java Edition 1.20.1, Fabric, and Java 17. Install a compatible Jane version on both client and server. Build with `gradlew.bat build`; use `build/libs/jane-1.1.8.3-beta.jar` rather than a development JAR.
+Jane targets Minecraft Java Edition 1.20.1, Fabric, and Java 17. Install a compatible Jane version on both client and server. Build with `gradlew.bat build`; use `build/libs/jane-1.1.8.4-beta.jar` rather than a development JAR.
 
 ## Connection decision
 
 On each connection, Jane validates the server's Required Manifest and compares it with the client's physical `mods/*.jar` files. If all Required files match by Mod ID, version, and SHA-512 and there are no extra client mods, Jane reports `EXACT_PASS` and continues immediately. If Required files are missing or mismatched, or if extra client mods are present, Jane shows a compact environment decision screen. The player can choose to synchronize or to review the risks and attempt a direct join. This local comparison does not query Modrinth.
 
-Choosing **Synchronize Mod Environment** opens the classic sync screen and starts source resolution. Jane only contacts Modrinth after this choice. If all Required files already match and only extra client mods remain, synchronization opens the client compatibility review instead; it does not download Required files or automatically remove extras. Explicit client-only and other extra mods are reported separately. Extra mods remain installed unless the player explicitly selects an eligible item for the existing disable helper.
+Choosing **Synchronize Mod Environment** opens the classic sync screen and starts source resolution. Jane only contacts Modrinth after this choice. If all Required files already match and only extra client mods remain, synchronization opens the client compatibility review instead; it does not download Required files or automatically remove extras. Explicit client-only and other extra mods are reported separately. Extra mods remain installed unless the player explicitly selects an item for the existing disable helper.
+
+## Manual extra-Mod disable
+
+Jane strictly verifies the server's Required files; extra client mods are outside that baseline and are not necessarily unnecessary. The compatibility review keeps explicitly client-only mods and other universal-environment mods in separate groups. Neither group is selected by default. A player may manually choose files from either group, including a mix, but Jane never automatically disables universal mods or their dependencies.
+
+Disabling a universal mod may break another mod's dependency, prevent startup, or cause missing features or crashes. Selecting one requires an additional risk confirmation. Before creating a disable plan, Jane rechecks the chosen physical JARs in this game's direct `mods/` directory and verifies their SHA-512; universal extras are hashed only after selection. Required files and Jane itself cannot enter this plan. The existing CMD helper waits for Minecraft to exit, then moves only the verified selected files into `jane/disabled/<serverId>/<timestamp>/` and writes `disabled.json`, `disable.log`, and a result marker. It keeps backups and the existing failure rollback; it does not permanently delete those JARs. If needed, close Minecraft and manually move a backed-up JAR into `mods/` to restore it.
+
+Jane records the player's choice, risk confirmation, prepared plan, and helper launch in local audit and Minecraft logs. A prepared plan or launched helper is not proof that the CMD operation succeeded; inspect `disable.log` and its result marker. No complete client mod inventory is uploaded to the server.
 
 Choosing **Join Server Directly** opens a separate risk confirmation with the unmet Required files and extra client mods. An extra-only confirmation preserves those mods and uses a one-time local reconnect permission; the next login still reports the genuine `EXACT_PASS` because the Required baseline matches. A missing or mismatched Required file instead uses one-time Protocol 4 `USER_OVERRIDE`. That attempt does not mean the files match, and Minecraft, Fabric, or the server may still refuse the connection. File errors and unsafe comparisons cannot be bypassed this way. An independent later connection performs the assessment again.
 
@@ -26,4 +34,4 @@ When a player confirms joining without installing an unsatisfied required file, 
 
 ## Protocol Compatibility
 
-Jane V1.1.8.3 Beta uses **Protocol 4**. Client and server Jane versions must be compatible; Protocol 3 is not silently downgraded. Protocol 4 distinguishes `EXACT_PASS`, `ACTION_REQUIRED`, `PROTOCOL_ERROR`, and `USER_OVERRIDE` without sending a client's private mod inventory.
+Jane V1.1.8.4 Beta uses **Protocol 4**. Client and server Jane versions must be compatible; Protocol 3 is not silently downgraded. Protocol 4 distinguishes `EXACT_PASS`, `ACTION_REQUIRED`, `PROTOCOL_ERROR`, and `USER_OVERRIDE` without sending a client's private mod inventory.

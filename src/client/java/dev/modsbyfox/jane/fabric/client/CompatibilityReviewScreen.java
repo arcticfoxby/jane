@@ -3,14 +3,18 @@ package dev.modsbyfox.jane.fabric.client;
 import dev.modsbyfox.jane.core.ClientCompatibilityReport;
 import dev.modsbyfox.jane.core.ClientDisableBatch;
 import dev.modsbyfox.jane.core.ClientDisablePlan;
+import dev.modsbyfox.jane.core.SyncDecisionAudit;
 import dev.modsbyfox.jane.fabric.JaneLog;
+import dev.modsbyfox.jane.fabric.ClientPhysicalDiscovery;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.metadata.ModEnvironment;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -28,31 +32,34 @@ final class CompatibilityReviewScreen extends Screen {
 
     private final Screen parent;
     private final PendingClientAction.CompatibilityReview action;
-    private final Set<String> selected = new HashSet<>();
+    private final CompatibilitySelection selected;
     private boolean explicitOpen = true;
-    private boolean otherOpen;
+    private boolean otherOpen = true;
     private boolean busy;
+    private List<ClientCompatibilityReport.ExtraMod> confirmedUniversalSelection;
     private int scroll;
     private int declarationScroll;
     private Component notice;
     private Button disableButton;
     private Button directButton;
+    private Button backButton;
 
     CompatibilityReviewScreen(Screen parent, PendingClientAction.CompatibilityReview action) {
         super(Component.translatable("jane.compat.title"));
         this.parent = parent;
         this.action = action;
+        this.selected = new CompatibilitySelection(action.report());
     }
 
     @Override protected void init() {
         int buttonWidth = Math.min(240, width - 36);
         int x = (width - buttonWidth) / 2;
-        disableButton = addRenderableWidget(Button.builder(Component.translatable("jane.compat.disable"),
-                button -> minecraft.setScreen(new ClientDisableConfirmScreen(this, selected.size())))
+        disableButton = addRenderableWidget(Button.builder(Component.translatable("jane.compat.disable_count", 0),
+                button -> confirmSelection())
                 .bounds(x, height - 76, buttonWidth, 20).build());
         directButton = addRenderableWidget(Button.builder(Component.translatable("jane.compat.direct_join"),
                 button -> directJoin()).bounds(x, height - 52, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.back"), button -> onClose())
+        backButton = addRenderableWidget(Button.builder(Component.translatable("gui.back"), button -> onClose())
                 .bounds(x, height - 28, buttonWidth, 20).build());
     }
 
@@ -88,7 +95,7 @@ final class CompatibilityReviewScreen extends Screen {
         result.add(new Row(RowType.OTHER_HEADER, 22, null, null));
         if (otherOpen) {
             addText(result, "jane.compat.other_warning");
-            for (var mod : action.report().otherExtraMods()) result.add(new Row(RowType.OTHER, 27, null, mod));
+            for (var mod : action.report().otherExtraMods()) result.add(new Row(RowType.OTHER, 40, null, mod));
         }
         result.add(new Row(RowType.TEXT, 6, null, null));
         addText(result, "jane.compat.disable_hint");
@@ -108,8 +115,10 @@ final class CompatibilityReviewScreen extends Screen {
 
     @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float tick) {
         renderBackground(graphics);
-        disableButton.active = !busy && !selected.isEmpty();
+        disableButton.active = !busy && selected.size() > 0;
+        disableButton.setMessage(Component.translatable("jane.compat.disable_count", selected.size()));
         directButton.active = !busy;
+        backButton.active = !busy;
         graphics.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.translatable("jane.compat.required_pass"), width / 2, 25, 0xAAFFAA);
         CompatibilityReviewLayout layout = layout();
@@ -171,21 +180,37 @@ final class CompatibilityReviewScreen extends Screen {
             String text = ((explicit ? explicitOpen : otherOpen) ? "▼ " : "▶ ")
                     + Component.translatable(explicit ? "jane.compat.explicit" : "jane.compat.other").getString();
             graphics.drawString(font, fit(text, right - left - 48), left + 5, y + 6, 0xFFFFFF);
-            graphics.drawString(font, Integer.toString(explicit ? action.report().explicitClientMods().size()
-                    : action.report().otherExtraMods().size()), right - 24, y + 6, 0xFFFFFF);
+            int total = explicit ? action.report().explicitClientMods().size()
+                    : action.report().otherExtraMods().size();
+            int picked = explicit ? selected.explicitCount() : selected.otherCount();
+            graphics.drawString(font, picked + "/" + total,
+                    right - font.width(picked + "/" + total) - 7, y + 6, 0xFFFFFF);
             return;
         }
         var mod = row.mod();
-        boolean selectable = row.type() == RowType.EXPLICIT && mod.sha512() != null;
+        boolean selectable = selected.selectable(mod);
         int x = left + (selectable ? 24 : 6);
-        if (selectable) graphics.drawString(font, selected.contains(mod.filename()) ? "☑" : "☐",
+        if (selectable) graphics.drawString(font, selected.contains(mod) ? "☑" : "☐",
                 left + 6, y + 7, 0xFFFFFF);
         graphics.drawString(font, fit(mod.displayName(), right - x - 6), x, y + 3, 0xFFFFFF);
-        String detail = mod.version() + (row.type() == RowType.EXPLICIT ? "  ·  " + mod.filename() : "");
+        String detail = mod.version() + "  ·  " + mod.filename();
         if (row.type() == RowType.EXPLICIT && mod.sha512() == null)
             detail += "  ·  " + Component.translatable("jane.direct.extra_unverified").getString();
         graphics.drawString(font, fit(detail, right - x - 6), x, y + 16,
                 row.type() == RowType.EXPLICIT && mod.sha512() == null ? 0xFF7777 : 0xCCCCCC);
+        if (row.type() == RowType.OTHER)
+            graphics.drawString(font, fit(Component.translatable(selectable
+                    ? "jane.compat.universal_kind" : rowErrorKey(mod)).getString(),
+                    right - x - 6), x, y + 28, selectable ? 0xFFCC77 : 0xFF7777);
+    }
+
+    private String rowErrorKey(ClientCompatibilityReport.ExtraMod mod) {
+        try {
+            dev.modsbyfox.jane.core.PathSafety.safeExistingJarName(mod.filename());
+        } catch (IllegalArgumentException exception) {
+            return "jane.compat.unsafe_file";
+        }
+        return "jane.compat.local_identity_error";
     }
 
     private String fit(String text, int maxWidth) {
@@ -218,12 +243,13 @@ final class CompatibilityReviewScreen extends Screen {
                 switch (row.type()) {
                     case EXPLICIT_HEADER -> explicitOpen = !explicitOpen;
                     case OTHER_HEADER -> otherOpen = !otherOpen;
-                    case EXPLICIT -> {
-                        if (row.mod().sha512() == null) {
+                    case EXPLICIT, OTHER -> {
+                        if (!selected.selectable(row.mod())) {
                             notice = Component.translatable("jane.compat.local_file_error");
                             return true;
                         }
-                        if (!selected.add(row.mod().filename())) selected.remove(row.mod().filename());
+                        selected.toggle(row.mod());
+                        notice = null;
                     }
                     default -> { return false; }
                 }
@@ -235,37 +261,156 @@ final class CompatibilityReviewScreen extends Screen {
         return false;
     }
 
-    void disableSelected() {
-        if (busy || selected.isEmpty()) return;
+    private void confirmSelection() {
+        List<ClientCompatibilityReport.ExtraMod> chosen = selected.selected();
+        if (busy || chosen.isEmpty()) return;
+        confirmedUniversalSelection = null;
+        if (!auditDisable("USER_SELECT_EXTRA_DISABLE", counts(chosen))) {
+            notice = Component.translatable("jane.compat.audit_failed");
+            return;
+        }
+        minecraft.setScreen(selected.needsUniversalConfirmation()
+                ? new ClientUniversalDisableConfirmScreen(this, chosen)
+                : new ClientDisableConfirmScreen(this, chosen));
+    }
+
+    boolean confirmUniversalDisable(List<ClientCompatibilityReport.ExtraMod> chosen) {
+        if (busy || chosen.isEmpty() || !selected.selected().equals(chosen)
+                || chosen.stream().noneMatch(mod -> mod.kind() == ClientCompatibilityReport.Kind.OTHER_EXTRA)) {
+            notice = Component.translatable("jane.compat.audit_failed");
+            return false;
+        }
+        boolean saved = auditDisable("USER_CONFIRM_UNIVERSAL_DISABLE", counts(chosen));
+        if (saved) confirmedUniversalSelection = List.copyOf(chosen);
+        if (!saved) notice = Component.translatable("jane.compat.audit_failed");
+        return saved;
+    }
+
+    private static Map<String, String> counts(List<ClientCompatibilityReport.ExtraMod> chosen) {
+        long explicit = chosen.stream().filter(mod ->
+                mod.kind() == ClientCompatibilityReport.Kind.EXPLICIT_CLIENT).count();
+        return Map.of("selectedExplicit", Long.toString(explicit),
+                "selectedOther", Long.toString(chosen.size() - explicit),
+                "selectedCount", Integer.toString(chosen.size()));
+    }
+
+    private boolean auditDisable(String event, Map<String, String> fields) {
+        Map<String, String> values = new HashMap<>(fields);
+        values.put("serverId", action.context().serverId());
+        try {
+            SyncDecisionAudit.record(FabricLoader.getInstance().getGameDir(), event, values);
+            LOGGER.info("{}event={} selectedExplicit={} selectedOther={} modId={} kind={} fileHash={} backupPoint={}",
+                    JaneLog.client(action.context().serverId()), event,
+                    values.getOrDefault("selectedExplicit", "-"), values.getOrDefault("selectedOther", "-"),
+                    values.getOrDefault("modId", "-"), values.getOrDefault("kind", "-"),
+                    values.getOrDefault("fileHash", "-"), values.getOrDefault("selectionTimestamp", "-"));
+            return true;
+        } catch (IOException | SecurityException exception) {
+            LOGGER.error("{}event={} auditWriteFailed cause={}", JaneLog.client(action.context().serverId()),
+                    event, exception.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private static final class DisableFailure extends RuntimeException {
+        private final String reason;
+        DisableFailure(String reason, Throwable cause) {
+            super(reason, cause);
+            this.reason = reason;
+        }
+    }
+
+    void disableSelected(List<ClientCompatibilityReport.ExtraMod> chosen) {
+        if (busy || chosen.isEmpty() || !selected.selected().equals(chosen)) return;
+        if (chosen.stream().anyMatch(mod -> mod.kind() == ClientCompatibilityReport.Kind.OTHER_EXTRA)
+                && !chosen.equals(confirmedUniversalSelection)) {
+            notice = Component.translatable("jane.compat.universal_confirmation_required");
+            return;
+        }
+        confirmedUniversalSelection = null;
         busy = true;
         notice = Component.translatable("jane.compat.preparing_disable");
-        List<ClientCompatibilityReport.ExtraMod> chosen = action.report().explicitClientMods().stream()
-                .filter(mod -> selected.contains(mod.filename())).toList();
         Path gameDir = FabricLoader.getInstance().getGameDir();
+        List<ClientCompatibilityReport.ExtraMod> snapshot = List.copyOf(chosen);
         CompletableFuture.supplyAsync(() -> {
+            String stage = "VALIDATION_FAILED";
             try {
-                ClientDisablePlan plan = ClientDisablePlan.prepare(gameDir, action.context().serverId(), action.report(), chosen);
+                List<ClientPhysicalDiscovery.PhysicalClientMod> physical = ClientPhysicalDiscovery.scan(gameDir).all();
+                ClientDisablePlan plan = ClientDisablePlan.prepare(gameDir, action.context().serverId(),
+                        action.context().manifest(), action.report(), snapshot, (expected, jar) ->
+                                physical.stream().anyMatch(found -> found.jar().equals(jar)
+                                        && found.modId().equals(expected.modId())
+                                        && found.displayName().equals(expected.displayName())
+                                        && found.version().equals(expected.version())
+                                        && found.environment() == (expected.kind()
+                                        == ClientCompatibilityReport.Kind.EXPLICIT_CLIENT
+                                        ? ModEnvironment.CLIENT : ModEnvironment.UNIVERSAL)));
+                stage = "AUDIT_FAILED";
+                for (int i = 0; i < plan.entries().size(); i++) {
+                    var entry = plan.entries().get(i);
+                    var selectedMod = snapshot.get(i);
+                    if (!auditDisable("EXTRA_DISABLE_FILE_VERIFIED", Map.of(
+                            "modId", entry.modId(), "kind", selectedMod.kind().name(),
+                            "fileHash", entry.sha512().substring(0, 12),
+                            "selectionTimestamp", plan.timestamp())))
+                        throw new IOException("Disable audit unavailable");
+                }
+                Map<String, String> planFields = new HashMap<>(counts(snapshot));
+                planFields.put("selectionTimestamp", plan.timestamp());
+                if (!auditDisable("EXTRA_DISABLE_PLAN_CREATED", planFields))
+                    throw new IOException("Disable audit unavailable");
+                stage = "BATCH_WRITE_FAILED";
                 ClientDisableBatch.write(gameDir, plan, ProcessHandle.current().pid());
                 return plan;
-            } catch (Exception exception) { throw new java.util.concurrent.CompletionException(exception); }
+            } catch (Exception exception) {
+                throw new java.util.concurrent.CompletionException(new DisableFailure(stage, exception));
+            }
         }).whenComplete((plan, error) -> minecraft.execute(() -> {
             busy = false;
             if (error != null) {
-                LOGGER.error("{}client disable plan failed", JaneLog.client(action.context().serverId()), error);
-                notice = Component.translatable("jane.compat.local_file_error");
+                DisableFailure failure = error.getCause() instanceof DisableFailure value ? value
+                        : new DisableFailure("VALIDATION_FAILED", error);
+                LOGGER.error("{}event=EXTRA_DISABLE_FAILED reason={} cause={}",
+                        JaneLog.client(action.context().serverId()), failure.reason,
+                        failure.getCause().getClass().getSimpleName());
+                auditDisable("EXTRA_DISABLE_FAILED", Map.of("reason", failure.reason, "result", "FAILED"));
+                notice = failureNotice(failure);
                 return;
             }
-            LOGGER.info("{}playerAction=DISABLE_SELECTED selected={} modIds={} restartRequired=true",
-                    JaneLog.client(action.context().serverId()), plan.entries().size(),
-                    plan.entries().stream().map(ClientDisablePlan.Entry::modId).toList());
+            if (!auditDisable("EXTRA_DISABLE_HELPER_LAUNCH_REQUESTED", Map.of(
+                    "selectionTimestamp", plan.timestamp(), "selectedCount", Integer.toString(plan.entries().size())))) {
+                notice = Component.translatable("jane.compat.audit_failed");
+                return;
+            }
             try {
-                WindowsHelperLauncher.launch(minecraft, gameDir, "Jane client disable", "disable.bat",
-                        "disabled", plan.serverId(), plan.timestamp());
+                WindowsHelperLauncher.launch(minecraft, gameDir, "Jane client disable", "disable.bat", () -> {
+                    if (!auditDisable("EXTRA_DISABLE_HELPER_LAUNCHED", Map.of(
+                            "selectionTimestamp", plan.timestamp(), "selectedCount", Integer.toString(plan.entries().size()))))
+                        LOGGER.error("{}event=EXTRA_DISABLE_HELPER_LAUNCHED auditWriteFailed; CMD launch was accepted",
+                                JaneLog.client(action.context().serverId()));
+                }, "disabled", plan.serverId(), plan.timestamp());
             } catch (Exception exception) {
-                LOGGER.error("{}client disable helper failed to launch", JaneLog.client(action.context().serverId()), exception);
+                LOGGER.error("{}event=EXTRA_DISABLE_FAILED reason=HELPER_LAUNCH_FAILED cause={}",
+                        JaneLog.client(action.context().serverId()), exception.getClass().getSimpleName());
+                auditDisable("EXTRA_DISABLE_FAILED", Map.of("reason", "HELPER_LAUNCH_FAILED", "result", "FAILED"));
                 notice = Component.translatable("jane.compat.launch_failed");
             }
         }));
+    }
+
+    private Component failureNotice(DisableFailure failure) {
+        if ("AUDIT_FAILED".equals(failure.reason)) return Component.translatable("jane.compat.audit_failed");
+        String message = failure.getCause().getMessage();
+        if (message != null && message.contains("metadata changed"))
+            return Component.translatable("jane.compat.metadata_changed");
+        if (message != null && message.contains("changed"))
+            return Component.translatable("jane.compat.file_changed");
+        if (message != null && (message.contains("Required mod") || message.contains("Jane cannot")))
+            return Component.translatable("jane.compat.protected_file");
+        if (message != null && (message.contains("not an ordinary file") || message.contains("not a direct JAR")
+                || message.contains("Unsafe") || message.contains("escaped")))
+            return Component.translatable("jane.compat.unsafe_file");
+        return Component.translatable("jane.compat.local_file_error");
     }
 
     private void directJoin() {
@@ -276,5 +421,8 @@ final class CompatibilityReviewScreen extends Screen {
                 action.context(), action.report(), action.target(), !saved)));
     }
 
-    @Override public void onClose() { minecraft.setScreen(parent); }
+    @Override public void onClose() {
+        // Validation and helper launch may still be in flight after the confirmation screen closes.
+        if (!busy) minecraft.setScreen(parent);
+    }
 }

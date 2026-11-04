@@ -3,6 +3,7 @@ package dev.modsbyfox.jane.core;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -47,5 +48,23 @@ class OneShotExtraJoinTest {
         join.beginConnection(expected);
         join.beginConnection(new Object());
         assertFalse(join.consume(expected, SERVER, MANIFEST, report("1")));
+    }
+
+    @Test void physicalIdentityChangeInvalidatesExtraConfirmationWithoutHashingUniversalJar() {
+        var before = new ClientCompatibilityReport.ExtraMod("other", "Other", "1", "other.jar", null,
+                ClientCompatibilityReport.Kind.OTHER_EXTRA, Path.of("other.jar"),
+                new ClientCompatibilityReport.FileIdentity(10, FileTime.fromMillis(1000), "file-a"));
+        var after = new ClientCompatibilityReport.ExtraMod("other", "Other", "1", "other.jar", null,
+                ClientCompatibilityReport.Kind.OTHER_EXTRA, Path.of("other.jar"),
+                new ClientCompatibilityReport.FileIdentity(10, FileTime.fromMillis(1001), "file-a"));
+        var first = new ClientCompatibilityReport(List.of(), List.of(before),
+                ClientCompatibilityReport.fingerprint(List.of()));
+        var changed = new ClientCompatibilityReport(List.of(), List.of(after),
+                ClientCompatibilityReport.fingerprint(List.of()));
+        OneShotExtraJoin join = new OneShotExtraJoin();
+        Object connection = new Object();
+        assertTrue(join.arm(SERVER, MANIFEST, first));
+        join.beginConnection(connection);
+        assertFalse(join.consume(connection, SERVER, MANIFEST, changed));
     }
 }

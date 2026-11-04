@@ -74,7 +74,7 @@ public final class OneShotExtraJoin {
 
     private static void append(StringBuilder value, ClientCompatibilityReport.ExtraMod mod) {
         for (String field : new String[] { mod.kind().name(), mod.modId(), mod.version(),
-                mod.filename(), mod.sha512() }) {
+                mod.filename(), mod.sha512(), ClientCompatibilityReport.identityValue(mod.fileIdentity()) }) {
             if (field == null) value.append("-1:");
             else value.append(field.length()).append(':').append(field);
         }

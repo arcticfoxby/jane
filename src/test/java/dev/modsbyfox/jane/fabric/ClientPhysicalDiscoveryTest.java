@@ -3,6 +3,7 @@ package dev.modsbyfox.jane.fabric;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.modsbyfox.jane.core.Comparison;
+import dev.modsbyfox.jane.core.ClientCompatibilityReport;
 import dev.modsbyfox.jane.core.Hashing;
 import dev.modsbyfox.jane.core.ManifestEntry;
 import dev.modsbyfox.jane.core.RequiredManifest;
@@ -56,6 +57,14 @@ class ClientPhysicalDiscoveryTest {
         assertEquals(List.of("azurelib", "shape-shifter-curse"), found.candidates().keySet().stream().sorted().toList());
         assertEquals(Comparison.Status.OK, compare(List.of(required(azurelib, "azurelib", "3.0.19")))
                 .get(0).status());
+    }
+
+    @Test void physicalScanCarriesCheapFileIdentityWithoutChangingCandidates() throws Exception {
+        Path jar = PhysicalJarFixture.mod(mods(), "universal.jar", "universal", "1", "*");
+        var found = ClientPhysicalDiscovery.scan(game);
+        assertEquals(List.of(jar), found.candidates().get("universal").stream()
+                .map(Comparison.LocalMod::jar).toList());
+        assertEquals(ClientCompatibilityReport.FileIdentity.capture(jar), found.all().get(0).fileIdentity());
     }
 
     @Test void nestedAzureLibWithoutPhysicalJarIsMissing() throws Exception {

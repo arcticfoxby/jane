@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.modsbyfox.jane.core.ClientInstallCategory;
+import dev.modsbyfox.jane.core.JaneVersion;
 import dev.modsbyfox.jane.core.ManifestEntry;
 import dev.modsbyfox.jane.core.ModrinthDownload;
 import dev.modsbyfox.jane.core.PathSafety;
@@ -101,7 +102,7 @@ final class ModrinthService {
 
     private Optional<JsonObject> fetchJson(URI uri) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "modsbyfox/Jane/1.1.8.3-beta")
+                .header("User-Agent", "modsbyfox/Jane/" + JaneVersion.VALUE)
                 .header("Accept", "application/json").GET().build();
         HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
@@ -120,7 +121,7 @@ final class ModrinthService {
                   BooleanSupplier cancelled, LongConsumer progress) throws IOException, InterruptedException {
         ModrinthDownload.download(source, target, destination, cancelled, progress, uri -> {
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(5))
-                    .header("User-Agent", "modsbyfox/Jane/1.1.8.3-beta").GET().build();
+                    .header("User-Agent", "modsbyfox/Jane/" + JaneVersion.VALUE).GET().build();
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             return new ModrinthDownload.Response(response.statusCode(), response.headers().allValues("Location"), response.body());
         });

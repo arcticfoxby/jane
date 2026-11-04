@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Assumptions;
@@ -27,6 +29,176 @@ class ClientDisablePlanTest {
     private ClientCompatibilityReport report(ClientCompatibilityReport.ExtraMod... mods) {
         List<ClientCompatibilityReport.ExtraMod> explicit = List.of(mods);
         return new ClientCompatibilityReport(explicit, List.of(), ClientCompatibilityReport.fingerprint(explicit));
+    }
+
+    private ClientCompatibilityReport.ExtraMod other(String name, String id) throws Exception {
+        Path mods = Files.createDirectories(game.resolve("mods"));
+        Path file = Files.writeString(mods.resolve(name), "file-" + id);
+        return new ClientCompatibilityReport.ExtraMod(id, id, "1", name, null,
+                ClientCompatibilityReport.Kind.OTHER_EXTRA, file,
+                ClientCompatibilityReport.FileIdentity.capture(file));
+    }
+
+    private ClientCompatibilityReport mixedReport(List<ClientCompatibilityReport.ExtraMod> explicit,
+                                                  List<ClientCompatibilityReport.ExtraMod> other) {
+        return new ClientCompatibilityReport(explicit, other, ClientCompatibilityReport.fingerprint(explicit));
+    }
+
+    private RequiredManifest noRequired() {
+        return new RequiredManifest(RequiredManifest.PROTOCOL, List.of());
+    }
+
+    @Test void universalSelectionIsDeferredHashedAndOnlySelectedFilesEnterPlan() throws Exception {
+        var sodium = mod("sodium.jar", "sodium");
+        var twilight = other("【暮色】twilightforest.jar", "twilightforest");
+        var untouched = other("untouched.jar", "untouched");
+        var report = mixedReport(List.of(sodium), List.of(twilight, untouched));
+        assertNull(twilight.sha512(), "Universal discovery must not eagerly hash the JAR");
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, report,
+                List.of(twilight)), "Legacy four-argument call remains explicit-only");
+        Files.delete(untouched.jar()); // An unselected extra is not inspected during preparation.
+        ClientDisablePlan plan = ClientDisablePlan.prepare(game, SERVER, noRequired(), report,
+                List.of(sodium, twilight), (expected, jar) -> true);
+        assertEquals(List.of("sodium.jar", "【暮色】twilightforest.jar"), plan.entries().stream()
+                .map(ClientDisablePlan.Entry::filename).toList());
+        assertEquals(Hashing.sha512(twilight.jar()), plan.entries().get(1).sha512());
+        assertTrue(Files.exists(twilight.jar()));
+        assertTrue(Files.exists(sodium.jar()));
+    }
+
+    @Test void universalSelectionRequiresUnchangedSnapshotAndFreshPhysicalMetadata() throws Exception {
+        var twilight = other("twilightforest.jar", "twilightforest");
+        var report = mixedReport(List.of(), List.of(twilight));
+        Files.writeString(twilight.jar(), "other-content");
+        Files.setLastModifiedTime(twilight.jar(), FileTime.from(Instant.now().plusSeconds(10)));
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                report, List.of(twilight), (expected, jar) -> true));
+        assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
+
+        var refreshed = other("twilightforest.jar", "twilightforest");
+        var refreshedReport = mixedReport(List.of(), List.of(refreshed));
+        var metadataError = assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER,
+                noRequired(), refreshedReport, List.of(refreshed), (expected, jar) -> false));
+        assertEquals("Selected extra JAR metadata changed", metadataError.getMessage());
+        assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
+    }
+
+    @Test void fileChangingDuringPreparationAndUnverifiedUniversalAreRejected() throws Exception {
+        var twilight = other("twilightforest.jar", "twilightforest");
+        var report = mixedReport(List.of(), List.of(twilight));
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                report, List.of(twilight), (expected, jar) -> {
+                    Files.writeString(jar, "modified during verification");
+                    Files.setLastModifiedTime(jar, FileTime.from(Instant.now().plusSeconds(20)));
+                    return true;
+                }));
+        var noStamp = new ClientCompatibilityReport.ExtraMod(twilight.modId(), twilight.displayName(),
+                twilight.version(), twilight.filename(), null, twilight.kind(), twilight.jar());
+        var unstampedReport = mixedReport(List.of(), List.of(noStamp));
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                unstampedReport, List.of(noStamp), (expected, jar) -> true));
+        assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
+    }
+
+    @Test void requiredForgedAndDuplicateSelectionsNeverEnterDisablePlan() throws Exception {
+        var twilight = other("twilightforest.jar", "twilightforest");
+        var report = mixedReport(List.of(), List.of(twilight));
+        var required = new RequiredManifest(RequiredManifest.PROTOCOL,
+                List.of(new ManifestEntry("twilightforest", "Twilight Forest", "1", Files.size(twilight.jar()),
+                        Hashing.sha512(twilight.jar()))));
+        var blocked = assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER,
+                required, report, List.of(twilight), (expected, jar) -> true));
+        assertEquals("Required mod cannot be disabled", blocked.getMessage());
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                report, List.of(twilight, twilight), (expected, jar) -> true));
+        var forged = other("forged.jar", "forged");
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                report, List.of(forged), (expected, jar) -> true));
+        assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
+    }
+
+    @Test void janeAndUnsafeUniversalFileNamesCannotEnterPlan() throws Exception {
+        assertThrows(IllegalArgumentException.class, () -> new ClientCompatibilityReport.ExtraMod(
+                "jane", "Jane", "1", "jane.jar", null, ClientCompatibilityReport.Kind.OTHER_EXTRA,
+                game.resolve("mods/jane.jar")));
+        Path jar = Files.writeString(Files.createDirectories(game.resolve("mods")).resolve("safe.jar"), "safe");
+        var unsafe = new ClientCompatibilityReport.ExtraMod("unsafe", "Unsafe", "1", "../safe.jar", null,
+                ClientCompatibilityReport.Kind.OTHER_EXTRA, jar,
+                ClientCompatibilityReport.FileIdentity.capture(jar));
+        var report = mixedReport(List.of(), List.of(unsafe));
+        assertThrows(IllegalArgumentException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                report, List.of(unsafe), (expected, path) -> true));
+        assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
+    }
+
+    @Test void crossInstancePathAndSymbolicLinkCannotBeDisabled() throws Exception {
+        var inOtherGame = other("other-instance.jar", "otherinstance");
+        Path secondGame = Files.createDirectories(game.resolve("second-game/mods"));
+        Path relocated = Files.move(inOtherGame.jar(), secondGame.resolve("other-instance.jar"));
+        var forged = new ClientCompatibilityReport.ExtraMod(inOtherGame.modId(), inOtherGame.displayName(),
+                inOtherGame.version(), inOtherGame.filename(), null, inOtherGame.kind(), relocated,
+                ClientCompatibilityReport.FileIdentity.capture(relocated));
+        var report = mixedReport(List.of(), List.of(forged));
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                report, List.of(forged), (expected, jar) -> true));
+
+        Path original = Files.writeString(game.resolve("mods/real.jar"), "real jar");
+        Path link = game.resolve("mods/link.jar");
+        try {
+            Files.createSymbolicLink(link, original);
+        } catch (java.io.IOException | UnsupportedOperationException | SecurityException exception) {
+            Assumptions.abort("Cannot create test symlink on this host");
+        }
+        var linked = new ClientCompatibilityReport.ExtraMod("linked", "Linked", "1", "link.jar", null,
+                ClientCompatibilityReport.Kind.OTHER_EXTRA, link,
+                new ClientCompatibilityReport.FileIdentity(Files.size(original), Files.getLastModifiedTime(original), null));
+        var linkedReport = mixedReport(List.of(), List.of(linked));
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(),
+                linkedReport, List.of(linked), (expected, jar) -> true));
+    }
+
+    @Test void hardLinkedJarCannotBeSelectedTwiceWhenFileKeyIsAvailable() throws Exception {
+        var first = other("first.jar", "first");
+        Path secondPath = game.resolve("mods/second.jar");
+        try {
+            Files.createLink(secondPath, first.jar());
+        } catch (java.io.IOException | UnsupportedOperationException | SecurityException exception) {
+            Assumptions.abort("Cannot create test hard link on this host");
+        }
+        var second = new ClientCompatibilityReport.ExtraMod("second", "Second", "1", "second.jar", null,
+                ClientCompatibilityReport.Kind.OTHER_EXTRA, secondPath,
+                ClientCompatibilityReport.FileIdentity.capture(secondPath));
+        Assumptions.assumeTrue(first.fileIdentity().fileKey() != null);
+        assertEquals(first.fileIdentity().fileKey(), second.fileIdentity().fileKey());
+        var report = mixedReport(List.of(), List.of(first, second));
+        assertThrows(java.io.IOException.class, () -> ClientDisablePlan.prepare(game, SERVER, noRequired(), report,
+                List.of(first, second), (expected, jar) -> true));
+        assertFalse(Files.exists(game.resolve("jane/disabled/" + SERVER)));
+    }
+
+    @Test void mixedSelectionBatchMovesOnlyChosenJarsAndRetainsBackupEvidence() throws Exception {
+        Assumptions.assumeTrue(isWindows());
+        var explicit = mod("sodium.jar", "sodium");
+        var universal = other("【暮色】twilightforest.jar", "twilightforest");
+        var untouched = other("untouched.jar", "untouched");
+        var report = mixedReport(List.of(explicit), List.of(universal, untouched));
+        ClientDisablePlan plan = ClientDisablePlan.prepare(game, SERVER, noRequired(), report,
+                List.of(explicit, universal), (expected, jar) -> true);
+        assertEquals(0, run(plan));
+        Path disabled = game.resolve("jane/disabled/" + SERVER + "/" + plan.timestamp());
+        assertFalse(Files.exists(explicit.jar()));
+        assertFalse(Files.exists(universal.jar()));
+        assertTrue(Files.exists(untouched.jar()));
+        assertEquals(plan.entries().get(0).sha512(), Hashing.sha512(disabled.resolve("sodium.jar")));
+        assertEquals(plan.entries().get(1).sha512(), Hashing.sha512(disabled.resolve(universal.filename())));
+        assertTrue(Files.isRegularFile(disabled.resolve("success.marker")));
+        String metadata = Files.readString(disabled.resolve("disabled.json"));
+        assertTrue(metadata.contains(universal.filename()));
+        assertFalse(metadata.contains("fileIdentity"));
+        String log = Files.readString(disabled.resolve("disable.log"));
+        assertTrue(log.contains("MOVE sodium OK"));
+        assertTrue(log.contains("MOVE twilightforest OK"));
+        assertTrue(log.contains("SUCCESS"));
     }
 
     @Test void planContainsOnlySelectedExplicitExtras() throws Exception {

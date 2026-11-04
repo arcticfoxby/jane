@@ -30,7 +30,8 @@ public final class SyncDecisionAudit {
             "selectedOptional", "defaultOptional", "selectedCount", "downloadCount",
             "requiredBaseline", "joinAction", "selectionTimestamp", "status", "result",
             "matched", "extraClientMods", "preservedExtras", "hashMismatch",
-            "comparisonStatus", "requiredHash");
+            "comparisonStatus", "requiredHash", "from", "to", "readyCount", "remainingCount",
+            "selectedExplicit", "selectedOther", "kind", "fileHash");
 
     private SyncDecisionAudit() { }
 
@@ -64,7 +65,7 @@ public final class SyncDecisionAudit {
             sorted.put(key, field.getValue());
         }
         StringBuilder line = new StringBuilder(Instant.now().toString())
-                .append(" [Jane 1.1.8.3-beta][CLIENT] ").append(event);
+                .append(" [Jane ").append(JaneVersion.VALUE).append("][CLIENT] ").append(event);
         for (var field : sorted.entrySet()) {
             String key = field.getKey();
             line.append(' ').append(key).append('=').append(safeValue(key, field.getValue()));
@@ -72,7 +73,32 @@ public final class SyncDecisionAudit {
         return line.append('\n').toString();
     }
 
-    private static String safeValue(String key, String value) {
+    private static String safeValue(String key, String value) throws IOException {
+        if (key.equals("from") || key.equals("to")) {
+            if ("NONE".equals(value)) return value;
+            for (ResolutionPlan.TransferRoute route : ResolutionPlan.TransferRoute.values()) {
+                if (route.name().equals(value)) return value;
+            }
+            throw new IOException("Invalid Jane sync audit route");
+        }
+        if (key.equals("readyCount") || key.equals("remainingCount")
+                || key.equals("selectedExplicit") || key.equals("selectedOther")) {
+            if (value != null && NUMBER.matcher(value).matches()) return value;
+            throw new IOException("Invalid Jane sync audit count");
+        }
+        if (key.equals("kind")) {
+            if (value != null) {
+                for (ClientCompatibilityReport.Kind kind : ClientCompatibilityReport.Kind.values()) {
+                    if (kind.name().equals(value)) return value;
+                }
+            }
+            throw new IOException("Invalid Jane sync audit kind");
+        }
+        if (key.equals("fileHash")) {
+            if (value != null && value.matches("[0-9a-fA-F]{12}"))
+                return value.toLowerCase(java.util.Locale.ROOT);
+            throw new IOException("Invalid Jane sync audit hash prefix");
+        }
         if (value == null) return "[REDACTED]";
         if (key.equals("serverId") || key.equals("manifestDigest")) {
             return HEX_ID.matcher(value).matches() ? value.substring(0, 12).toLowerCase(java.util.Locale.ROOT)
