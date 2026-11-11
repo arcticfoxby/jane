@@ -3,6 +3,7 @@
   "id": "jane",
   "version": "${version}",
   "name": "简",
+  "icon": "assets/jane/icon.png",
   "description": "Aligns server-required mod JARs before joining a remote server.",
   "environment": "*",
   "entrypoints": {
