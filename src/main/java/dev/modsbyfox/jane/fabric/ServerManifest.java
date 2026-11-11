@@ -62,6 +62,9 @@ final class ServerManifest {
     static BuildResult build(List<ServerDiscovery.Discovered> discovered, Path gameDir) throws IOException {
         List<Classified> classified = new ArrayList<>();
         List<ManifestEntry> required = new ArrayList<>();
+        Path blacklist = PathSafety.janeDirectory(gameDir, "blacklist");
+        if (!Files.isDirectory(blacklist, LinkOption.NOFOLLOW_LINKS))
+            throw new IOException("Jane blacklist is not a directory");
         for (ServerDiscovery.Discovered item : discovered.stream()
                 .sorted(Comparator.comparing(value -> value.candidate().modId())).toList()) {
             ServerDiscovery.Candidate candidate = item.candidate();
@@ -73,6 +76,12 @@ final class ServerManifest {
             }
             Path safe = PathSafety.existingJarInMods(gameDir, item.jar());
             JarData jar = readJar(safe, candidate.modId());
+            if (matchesBlacklist(blacklist, safe, jar)) {
+                classified.add(new Classified(item, null, ClientSyncDecision.EXCLUDE, "blacklist_exact_copy"));
+                LOGGER.info("{}discovery modId={} decision=EXCLUDE reason=blacklist_exact_copy",
+                        JaneLog.server(), candidate.modId());
+                continue;
+            }
             try {
                 required.add(new ManifestEntry(candidate.modId(), candidate.displayName(), candidate.version(),
                         jar.size(), jar.sha512()));
@@ -106,5 +115,28 @@ final class ServerManifest {
         if (Files.size(jar) != size || !Files.getLastModifiedTime(jar).equals(modified))
             throw new IOException("Required JAR changed while hashing: " + id);
         return new JarData(size, hash);
+    }
+
+    private static boolean matchesBlacklist(Path blacklist, Path jar, JarData target) throws IOException {
+        Path copy = blacklist.resolve(jar.getFileName());
+        if (!Files.exists(copy, LinkOption.NOFOLLOW_LINKS)) return false;
+        if (Files.isSymbolicLink(copy) || !Files.isRegularFile(copy, LinkOption.NOFOLLOW_LINKS)
+                || !copy.toRealPath().getParent().equals(blacklist))
+            throw new IOException("Unsafe Jane blacklist JAR: " + jar.getFileName());
+        long size = Files.size(copy);
+        if (size != target.size()) {
+            LOGGER.warn("{}blacklist copy differs from mods JAR; file={}", JaneLog.server(), jar.getFileName());
+            return false;
+        }
+        FileTime modified = Files.getLastModifiedTime(copy, LinkOption.NOFOLLOW_LINKS);
+        String hash = Hashing.sha512(copy);
+        if (Files.isSymbolicLink(copy) || !Files.isRegularFile(copy, LinkOption.NOFOLLOW_LINKS)
+                || !copy.toRealPath().getParent().equals(blacklist)
+                || Files.size(copy) != size
+                || !Files.getLastModifiedTime(copy, LinkOption.NOFOLLOW_LINKS).equals(modified))
+            throw new IOException("Jane blacklist JAR changed while hashing: " + jar.getFileName());
+        if (!target.sha512().equals(hash))
+            LOGGER.warn("{}blacklist copy differs from mods JAR; file={}", JaneLog.server(), jar.getFileName());
+        return target.sha512().equals(hash);
     }
 }

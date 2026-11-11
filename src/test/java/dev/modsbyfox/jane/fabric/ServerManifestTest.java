@@ -7,11 +7,13 @@ import dev.modsbyfox.jane.core.Hashing;
 import dev.modsbyfox.jane.core.RequiredManifest;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,6 +21,64 @@ class ServerManifestTest {
     @TempDir Path gameDir;
 
     private Path mods() { return gameDir.resolve("mods"); }
+    private Path blacklist() { return gameDir.resolve("jane/blacklist"); }
+
+    @Test void identicalBlacklistCopyExcludesOnlyThatJar() throws Exception {
+        Path blocked = PhysicalJarFixture.mod(mods(), "blocked.jar", "blocked", "*");
+        PhysicalJarFixture.mod(mods(), "kept.jar", "kept", "*");
+        Files.createDirectories(blacklist());
+        Files.copy(blocked, blacklist().resolve(blocked.getFileName()));
+
+        ServerManifest.BuildResult result = ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir);
+        assertEquals(List.of("kept"), result.manifest().entries().stream().map(entry -> entry.modId()).toList());
+        Map<String, ClientSyncDecision> decisions = result.classified().stream().collect(Collectors.toMap(
+                item -> item.discovered().candidate().modId(), ServerManifest.Classified::decision));
+        assertEquals(ClientSyncDecision.EXCLUDE, decisions.get("blocked"));
+        assertEquals(ClientSyncDecision.SYNC, decisions.get("kept"));
+        assertEquals("blacklist_exact_copy", result.classified().stream()
+                .filter(item -> item.discovered().candidate().modId().equals("blocked"))
+                .findFirst().orElseThrow().reason());
+    }
+
+    @Test void blacklistOnlyJarDoesNotAffectMods() throws Exception {
+        Path kept = PhysicalJarFixture.mod(mods(), "kept.jar", "kept", "*");
+        PhysicalJarFixture.mod(blacklist(), "orphan.jar", "orphan", "*");
+
+        ServerManifest.BuildResult result = ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir);
+        assertEquals(List.of("kept"), result.manifest().entries().stream().map(entry -> entry.modId()).toList());
+        assertEquals(Hashing.sha512(kept), result.manifest().entries().get(0).sha512());
+        assertEquals(List.of(ClientSyncDecision.SYNC), result.classified().stream()
+                .map(ServerManifest.Classified::decision).toList());
+    }
+
+    @Test void staleSameNameBlacklistCopyDoesNotExcludeChangedMod() throws Exception {
+        Path current = PhysicalJarFixture.mod(mods(), "same.jar", "example", "2.0", "*");
+        PhysicalJarFixture.mod(blacklist(), "same.jar", "example", "1.0", "*");
+        assertEquals(Files.size(current), Files.size(blacklist().resolve("same.jar")));
+        assertNotEquals(Hashing.sha512(current), Hashing.sha512(blacklist().resolve("same.jar")));
+
+        ServerManifest.BuildResult result = ServerManifest.build(ServerDiscovery.discover(gameDir).mods(), gameDir);
+        assertEquals(List.of("example"), result.manifest().entries().stream().map(entry -> entry.modId()).toList());
+        assertEquals(Hashing.sha512(current), result.manifest().entries().get(0).sha512());
+        assertEquals(ClientSyncDecision.SYNC, result.classified().get(0).decision());
+    }
+
+    @Test void buildCreatesBlacklistDirectory() throws Exception {
+        assertFalse(Files.exists(blacklist(), LinkOption.NOFOLLOW_LINKS));
+        ServerManifest.build(List.of(), gameDir);
+        assertTrue(Files.isDirectory(blacklist(), LinkOption.NOFOLLOW_LINKS));
+    }
+
+    @Test void blacklistDirectorySymlinkIsRejectedWhenSupported() throws Exception {
+        Files.createDirectory(gameDir.resolve("jane"));
+        Path target = Files.createDirectory(gameDir.resolve("other"));
+        try {
+            Files.createSymbolicLink(blacklist(), target);
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            Assumptions.assumeTrue(false, "Directory symlinks are unavailable in this test environment");
+        }
+        assertThrows(IOException.class, () -> ServerManifest.build(List.of(), gameDir));
+    }
 
     @Test void universalClientAndFabricApiEnterPhysicalManifest() throws Exception {
         Path universal = PhysicalJarFixture.mod(mods(), "universal.jar", "universal", "*");
